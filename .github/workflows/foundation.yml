@@ -45,3 +45,18 @@ jobs:
             echo 'Potential secret/signing file committed.'
             exit 1
           fi
+
+  domain:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/domain
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+      - name: Install dependencies
+        run: dart pub get
+      - name: Analyze
+        run: dart analyze --fatal-infos
+      - name: Test
+        run: dart test
