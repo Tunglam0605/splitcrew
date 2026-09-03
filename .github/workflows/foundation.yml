@@ -1,0 +1,47 @@
+name: Foundation checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  repository-structure:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify required project files
+        shell: bash
+        run: |
+          set -euo pipefail
+          required=(
+            README.md
+            LICENSE
+            ROADMAP.md
+            CONTRIBUTING.md
+            SECURITY.md
+            CHANGELOG.md
+            docs/architecture/system-overview.md
+            docs/architecture/local-host-sync.md
+            docs/database/schema.md
+            docs/protocol/sync-protocol.md
+          )
+          for file in "${required[@]}"; do
+            test -f "$file" || { echo "Missing required file: $file"; exit 1; }
+          done
+          echo "Repository foundation is valid."
+
+      - name: Reject obvious committed secret files
+        shell: bash
+        run: |
+          set -euo pipefail
+          if find . -type f \
+            \( -name '.env' -o -name '*.jks' -o -name '*.keystore' -o -name 'key.properties' \) \
+            -not -path './.git/*' | grep -q .; then
+            echo 'Potential secret/signing file committed.'
+            exit 1
+          fi
