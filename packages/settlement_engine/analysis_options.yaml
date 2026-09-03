@@ -1,0 +1,6 @@
+include: package:lints/recommended.yaml
+
+analyzer:
+  errors:
+    invalid_assignment: error
+    missing_return: error

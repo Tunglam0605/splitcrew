@@ -1,0 +1,26 @@
+name: splitcrew_mobile
+description: SplitCrew Android-first mobile MVP.
+publish_to: none
+version: 0.1.0+1
+
+environment:
+  sdk: '>=3.4.0 <4.0.0'
+
+flutter:
+  uses-material-design: true
+
+dependencies:
+  flutter:
+    sdk: flutter
+  shared_preferences: ^2.3.2
+  splitcrew_domain:
+    path: ../../packages/domain
+  splitcrew_split_engine:
+    path: ../../packages/split_engine
+  splitcrew_settlement_engine:
+    path: ../../packages/settlement_engine
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0

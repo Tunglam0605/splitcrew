@@ -1,6 +1,6 @@
 # SplitCrew Roadmap
 
-SplitCrew is developed in vertical milestones. Each milestone must keep the main branch buildable and the money-calculation core deterministic.
+SplitCrew is developed in vertical milestones. Each milestone must keep the money-calculation core deterministic and `main` testable.
 
 ## M0 — Foundation
 
@@ -12,38 +12,43 @@ SplitCrew is developed in vertical milestones. Each milestone must keep the main
 
 ## M1 — Domain Core
 
-- [ ] Money value object using integer minor units
-- [ ] Trip and member entities
-- [ ] Expense aggregate
-- [ ] Multiple payers per expense
-- [ ] Allocation model
-- [ ] Domain invariants and validation
+- [x] Money value object using integer minor units
+- [x] Trip and member entities
+- [x] Expense aggregate
+- [x] Multiple payers per expense
+- [x] Allocation model
+- [x] Domain money-conservation invariants
 
 ## M2 — Split Engine
 
-- [ ] Equal split
-- [ ] Exact-amount split
-- [ ] Percentage split
-- [ ] Share/weight split
-- [ ] Per-item split
-- [ ] Deterministic rounding tests
+- [x] Equal split
+- [x] Exact-amount split
+- [x] Percentage split using integer basis points
+- [x] Share/weight split
+- [x] Per-item equal allocation and aggregation
+- [x] Deterministic remainder tests
 
 ## M3 — Settlement Engine
 
-- [ ] Per-member balance calculation
-- [ ] Settlement generation
-- [ ] Debt simplification
-- [ ] Settlement audit trail
+- [x] Per-member balance calculation
+- [x] Settlement generation
+- [x] Deterministic debt simplification
+- [ ] Rich settlement audit/explanation model
 
 ## M4 — Local Mobile MVP
 
-- [ ] Flutter application shell
-- [ ] Local SQLite persistence
-- [ ] Create/manage trips
-- [ ] Add/manage members
-- [ ] Add/edit expenses
-- [ ] Balance and settlement screens
-- [ ] Works fully offline
+- [x] Flutter application shell
+- [x] Create a local trip
+- [x] Add members
+- [x] Add/delete expenses
+- [x] One or multiple payers
+- [x] Equal/exact/percentage/share split UI
+- [x] Balance and settlement screens
+- [x] Offline alpha persistence
+- [x] Automated Android debug APK artifact
+- [ ] SQLite/Drift persistence and migrations
+- [ ] Edit trip/member/expense flows
+- [ ] Production UX/accessibility pass
 
 ## M5 — Receipt & Payment
 
@@ -65,7 +70,7 @@ SplitCrew is developed in vertical milestones. Each milestone must keep the main
 ## M7 — Offline Synchronization
 
 - [ ] Local operation queue
-- [ ] UUID identifiers
+- [ ] UUID identifiers suitable for multi-device creation
 - [ ] Entity versioning
 - [ ] Optimistic concurrency checks
 - [ ] Conflict UX
@@ -82,8 +87,8 @@ SplitCrew is developed in vertical milestones. Each milestone must keep the main
 
 ## M9 — Public Beta
 
-- [ ] Automated Android APK build
-- [ ] GitHub Releases
+- [x] Automated Android debug APK build
+- [ ] Signed GitHub Release APK
 - [ ] Upgrade/migration tests
 - [ ] Accessibility review
 - [ ] Privacy review

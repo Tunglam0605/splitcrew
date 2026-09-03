@@ -1,0 +1,77 @@
+name: MVP checks and Android build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  split-engine:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/split_engine
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+      - run: dart pub get
+      - run: dart analyze --fatal-infos
+      - run: dart test
+
+  settlement-engine:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/settlement_engine
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+      - run: dart pub get
+      - run: dart analyze --fatal-infos
+      - run: dart test
+
+  android-mvp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.2'
+          channel: stable
+          cache: true
+      - name: Generate Android platform scaffold
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          flutter create \
+            --platforms=android \
+            --org io.github.tunglam0605 \
+            --project-name splitcrew_mobile \
+            "$tmp/mobile"
+          rm -rf apps/mobile/android
+          cp -R "$tmp/mobile/android" apps/mobile/android
+          cp "$tmp/mobile/.metadata" apps/mobile/.metadata
+      - name: Install Flutter dependencies
+        working-directory: apps/mobile
+        run: flutter pub get
+      - name: Analyze mobile app
+        working-directory: apps/mobile
+        run: flutter analyze --no-fatal-infos
+      - name: Test mobile app
+        working-directory: apps/mobile
+        run: flutter test
+      - name: Build debug APK
+        working-directory: apps/mobile
+        run: flutter build apk --debug
+      - name: Upload Android debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: splitcrew-android-debug
+          path: apps/mobile/build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
