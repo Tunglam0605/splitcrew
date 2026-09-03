@@ -140,22 +140,32 @@ final class SplitEngine {
     }
 
     final units = <String, int>{};
+    final fractionalRemainders = <String, int>{};
     var assigned = 0;
     for (final id in ids) {
       final weight = weights[id]!;
       if (weight < 0) {
         throw ArgumentError('Weights must not be negative.');
       }
-      final value = (total.minorUnits * weight) ~/ totalWeight;
+      final numerator = total.minorUnits * weight;
+      final value = numerator ~/ totalWeight;
       units[id] = value;
+      fractionalRemainders[id] = numerator % totalWeight;
       assigned += value;
     }
 
-    var remainder = total.minorUnits - assigned;
-    for (final id in ids) {
-      if (remainder == 0) break;
+    var remainderUnits = total.minorUnits - assigned;
+    final remainderOrder = ids.where((id) => weights[id]! > 0).toList()
+      ..sort((a, b) {
+        final byFraction = fractionalRemainders[b]!.compareTo(fractionalRemainders[a]!);
+        return byFraction != 0 ? byFraction : a.compareTo(b);
+      });
+    if (remainderUnits > remainderOrder.length) {
+      throw StateError('Weighted remainder exceeded the number of positive weights.');
+    }
+    for (var i = 0; i < remainderUnits; i++) {
+      final id = remainderOrder[i];
       units[id] = units[id]! + 1;
-      remainder--;
     }
 
     return List.unmodifiable([
@@ -181,11 +191,12 @@ final class SplitEngine {
 }
 
 List<String> _normalizedIds(Iterable<String> memberIds) {
-  final ids = memberIds.toSet().toList()..sort();
+  final source = memberIds.toList();
+  final ids = source.toSet().toList()..sort();
   if (ids.any((id) => id.trim().isEmpty)) {
     throw ArgumentError('Member IDs must not be empty.');
   }
-  if (ids.length != memberIds.length) {
+  if (ids.length != source.length) {
     throw ArgumentError('Duplicate member IDs are not allowed.');
   }
   return ids;

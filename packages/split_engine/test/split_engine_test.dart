@@ -33,7 +33,16 @@ void main() {
     expect(result.fold<int>(0, (s, e) => s + e.amount.minorUnits), 999);
   });
 
-  test('share split conserves total', () {
+  test('zero-percent member never receives rounding remainder', () {
+    final result = SplitEngine.percentages(
+      total: const Money(minorUnits: 1, currencyCode: 'VND'),
+      basisPoints: const {'a': 0, 'b': 5000, 'c': 5000},
+    );
+    expect(result.firstWhere((e) => e.memberId == 'a').amount.minorUnits, 0);
+    expect(result.fold<int>(0, (s, e) => s + e.amount.minorUnits), 1);
+  });
+
+  test('share split conserves total using largest remainder', () {
     final result = SplitEngine.shares(
       total: const Money(minorUnits: 101, currencyCode: 'VND'),
       shares: const {'a': 1, 'b': 2},
