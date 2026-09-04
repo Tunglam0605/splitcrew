@@ -59,7 +59,7 @@ final class _CreateTripPageState extends State<CreateTripPage> {
                   Text('SplitCrew', style: Theme.of(context).textTheme.headlineLarge, textAlign: TextAlign.center),
                   const SizedBox(height: 8),
                   const Text(
-                    'Create a crew, add real expenses, and see exactly who should pay whom. This alpha works offline on one phone.',
+                    'Shared expenses without a cloud account. Your crew data stays on this phone and works offline.',
                     textAlign: TextAlign.center,
                   ),
                   if (widget.loadError != null) ...[
@@ -88,6 +88,15 @@ final class _CreateTripPageState extends State<CreateTripPage> {
                     onPressed: _saving ? null : _create,
                     icon: const Icon(Icons.arrow_forward_rounded),
                     label: Text(_saving ? 'Creating…' : 'Create crew'),
+                  ),
+                  const SizedBox(height: 16),
+                  const Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.offline_bolt_outlined, size: 18),
+                      SizedBox(width: 6),
+                      Text('Local-first · no server required'),
+                    ],
                   ),
                 ],
               ),
@@ -129,12 +138,22 @@ final class TripDashboard extends StatelessWidget {
             ),
             PopupMenuButton<String>(
               onSelected: (value) async {
-                if (value == 'reset') {
-                  final confirmed = await _confirmReset(context);
+                if (value == 'rename') {
+                  await _showRenameTripDialog(context, controller);
+                } else if (value == 'reset') {
+                  final confirmed = await _confirm(
+                    context,
+                    title: 'Delete local crew?',
+                    message: 'This permanently deletes this crew and all expenses stored on this phone.',
+                    confirmLabel: 'Delete',
+                  );
                   if (confirmed) await controller.reset();
                 }
               },
-              itemBuilder: (_) => const [PopupMenuItem(value: 'reset', child: Text('Reset local trip'))],
+              itemBuilder: (_) => const [
+                PopupMenuItem(value: 'rename', child: Text('Rename crew')),
+                PopupMenuItem(value: 'reset', child: Text('Delete local crew')),
+              ],
             ),
           ],
           bottom: const TabBar(
@@ -171,44 +190,65 @@ final class _ExpensesTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final expenses = controller.trip!.expenses.reversed.toList();
+    final trip = controller.trip!;
+    final expenses = trip.expenses.reversed.toList();
     if (expenses.isEmpty) {
       return const _EmptyState(
         icon: Icons.receipt_long_outlined,
         title: 'No expenses yet',
-        message: 'Tap “Expense” to add the first bill. Equal and custom splits are ready for testing.',
+        message: 'Add the first bill. You can split equally, by exact amount, percentage, or shares.',
       );
     }
-    return ListView.separated(
+    return ListView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
-      itemCount: expenses.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 10),
-      itemBuilder: (context, index) {
-        final expense = expenses[index];
-        final payerNames = expense.payerMinorByMember.entries
-            .map((entry) => '${controller.memberName(entry.key)} ${_money(entry.value)}')
-            .join(' + ');
-        return Card(
-          child: ListTile(
-            title: Text(expense.title),
-            subtitle: Text('Paid: $payerNames\nSplit across ${expense.allocationMinorByMember.length} member(s)'),
-            isThreeLine: true,
-            trailing: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text('${_money(expense.totalMinor)} ₫', style: Theme.of(context).textTheme.titleMedium),
-                IconButton(
-                  visualDensity: VisualDensity.compact,
-                  tooltip: 'Delete expense',
-                  onPressed: () => controller.removeExpense(expense.id),
-                  icon: const Icon(Icons.delete_outline_rounded),
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: _MetricCard(
+                label: 'Total spent',
+                value: '${_money(controller.totalSpentMinor)} ₫',
+                icon: Icons.payments_outlined,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _MetricCard(
+                label: 'Expenses',
+                value: '${expenses.length}',
+                icon: Icons.receipt_outlined,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 14),
+        for (final expense in expenses) ...[
+          Card(
+            child: ListTile(
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => ExpenseDetailPage(controller: controller, expenseId: expense.id),
                 ),
-              ],
+              ),
+              leading: const CircleAvatar(child: Icon(Icons.receipt_long_rounded)),
+              title: Text(expense.title),
+              subtitle: Text(
+                'Paid by ${_payerSummary(controller, expense)}\n${expense.allocationMinorByMember.length} participant(s)',
+              ),
+              isThreeLine: true,
+              trailing: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text('${_money(expense.totalMinor)} ₫', style: Theme.of(context).textTheme.titleMedium),
+                  const Icon(Icons.chevron_right_rounded),
+                ],
+              ),
             ),
           ),
-        );
-      },
+          const SizedBox(height: 10),
+        ],
+      ],
     );
   }
 }
@@ -222,28 +262,37 @@ final class _BalancesTab extends StatelessWidget {
   Widget build(BuildContext context) {
     final balances = controller.balances;
     final transfers = controller.settlements;
+    final trip = controller.trip!;
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
       children: [
         Text('Net balances', style: Theme.of(context).textTheme.titleLarge),
+        const SizedBox(height: 4),
+        const Text('Net = money paid − your allocated share.'),
         const SizedBox(height: 8),
         for (final balance in balances)
           Card(
             child: ListTile(
               title: Text(controller.memberName(balance.memberId)),
-              subtitle: Text(balance.balance.isPositive
-                  ? 'Should receive'
-                  : balance.balance.isNegative
-                      ? 'Should pay'
-                      : 'Settled'),
+              subtitle: Text(
+                'Paid ${_money(_paidBy(trip, balance.memberId))} · Share ${_money(_allocatedTo(trip, balance.memberId))}',
+              ),
               trailing: Text(
                 '${balance.balance.isPositive ? '+' : ''}${_money(balance.balance.minorUnits)} ₫',
-                style: Theme.of(context).textTheme.titleMedium,
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      color: balance.balance.isPositive
+                          ? Theme.of(context).colorScheme.primary
+                          : balance.balance.isNegative
+                              ? Theme.of(context).colorScheme.error
+                              : null,
+                    ),
               ),
             ),
           ),
         const SizedBox(height: 20),
         Text('Suggested transfers', style: Theme.of(context).textTheme.titleLarge),
+        const SizedBox(height: 4),
+        const Text('A deterministic settlement that clears the current balances.'),
         const SizedBox(height: 8),
         if (transfers.isEmpty)
           const Card(child: Padding(padding: EdgeInsets.all(16), child: Text('Everyone is settled.')))
@@ -251,8 +300,9 @@ final class _BalancesTab extends StatelessWidget {
           for (final transfer in transfers)
             Card(
               child: ListTile(
-                leading: const Icon(Icons.arrow_forward_rounded),
+                leading: const CircleAvatar(child: Icon(Icons.arrow_forward_rounded)),
                 title: Text('${controller.memberName(transfer.fromMemberId)} → ${controller.memberName(transfer.toMemberId)}'),
+                subtitle: const Text('Suggested repayment'),
                 trailing: Text('${_money(transfer.amount.minorUnits)} ₫'),
               ),
             ),
@@ -277,8 +327,33 @@ final class _MembersTab extends StatelessWidget {
             child: ListTile(
               leading: CircleAvatar(child: Text(member.name.isEmpty ? '?' : member.name[0].toUpperCase())),
               title: Text(member.name),
-              subtitle: Text(member.isOwner ? 'Owner / local host (future)' : 'Member'),
-              trailing: member.isOwner ? const Icon(Icons.workspace_premium_rounded) : null,
+              subtitle: Text(member.isOwner ? 'Owner' : 'Member · local profile'),
+              trailing: member.isOwner
+                  ? const Icon(Icons.workspace_premium_rounded)
+                  : PopupMenuButton<String>(
+                      onSelected: (value) async {
+                        if (value == 'rename') {
+                          await _showRenameMemberDialog(context, controller, member);
+                        } else if (value == 'remove') {
+                          final confirmed = await _confirm(
+                            context,
+                            title: 'Remove ${member.name}?',
+                            message: 'Members referenced by an expense cannot be removed until those expenses are edited or deleted.',
+                            confirmLabel: 'Remove',
+                          );
+                          if (!confirmed) return;
+                          try {
+                            await controller.removeMember(member.id);
+                          } catch (error) {
+                            if (context.mounted) _showError(context, error);
+                          }
+                        }
+                      },
+                      itemBuilder: (_) => const [
+                        PopupMenuItem(value: 'rename', child: Text('Rename')),
+                        PopupMenuItem(value: 'remove', child: Text('Remove')),
+                      ],
+                    ),
             ),
           ),
         const SizedBox(height: 8),
@@ -292,10 +367,126 @@ final class _MembersTab extends StatelessWidget {
   }
 }
 
-final class AddExpensePage extends StatefulWidget {
-  const AddExpensePage({super.key, required this.controller});
+final class ExpenseDetailPage extends StatelessWidget {
+  const ExpenseDetailPage({super.key, required this.controller, required this.expenseId});
 
   final TripController controller;
+  final String expenseId;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: controller,
+      builder: (context, _) {
+        final expense = controller.expenseById(expenseId);
+        if (expense == null) {
+          return Scaffold(
+            appBar: AppBar(title: const Text('Expense')),
+            body: const _EmptyState(
+              icon: Icons.delete_outline_rounded,
+              title: 'Expense no longer exists',
+              message: 'It may have been deleted.',
+            ),
+          );
+        }
+        return Scaffold(
+          appBar: AppBar(
+            title: Text(expense.title),
+            actions: [
+              IconButton(
+                tooltip: 'Edit expense',
+                icon: const Icon(Icons.edit_outlined),
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => AddExpensePage(controller: controller, initialExpense: expense),
+                  ),
+                ),
+              ),
+              PopupMenuButton<String>(
+                onSelected: (value) async {
+                  if (value != 'delete') return;
+                  final confirmed = await _confirm(
+                    context,
+                    title: 'Delete expense?',
+                    message: 'Balances will be recalculated immediately.',
+                    confirmLabel: 'Delete',
+                  );
+                  if (confirmed) {
+                    await controller.removeExpense(expense.id);
+                    if (context.mounted) Navigator.of(context).pop();
+                  }
+                },
+                itemBuilder: (_) => const [PopupMenuItem(value: 'delete', child: Text('Delete expense'))],
+              ),
+            ],
+          ),
+          body: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(18),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Total', style: Theme.of(context).textTheme.labelLarge),
+                      const SizedBox(height: 4),
+                      Text('${_money(expense.totalMinor)} ₫', style: Theme.of(context).textTheme.headlineMedium),
+                      const SizedBox(height: 10),
+                      Text('Version ${expense.version} · updated ${_dateTime(expense.updatedAtMs)}'),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text('Paid by', style: Theme.of(context).textTheme.titleLarge),
+              const SizedBox(height: 8),
+              for (final entry in expense.payerMinorByMember.entries)
+                Card(
+                  child: ListTile(
+                    leading: const Icon(Icons.payments_outlined),
+                    title: Text(controller.memberName(entry.key)),
+                    trailing: Text('${_money(entry.value)} ₫'),
+                  ),
+                ),
+              const SizedBox(height: 16),
+              Text('Allocated share', style: Theme.of(context).textTheme.titleLarge),
+              const SizedBox(height: 4),
+              const Text('These final integer amounts are the auditable source used by settlement calculations.'),
+              const SizedBox(height: 8),
+              for (final entry in expense.allocationMinorByMember.entries)
+                Card(
+                  child: ListTile(
+                    leading: const Icon(Icons.pie_chart_outline_rounded),
+                    title: Text(controller.memberName(entry.key)),
+                    trailing: Text('${_money(entry.value)} ₫'),
+                  ),
+                ),
+              const SizedBox(height: 16),
+              FilledButton.icon(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => AddExpensePage(controller: controller, initialExpense: expense),
+                  ),
+                ),
+                icon: const Icon(Icons.edit_outlined),
+                label: const Text('Edit expense'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+final class AddExpensePage extends StatefulWidget {
+  const AddExpensePage({super.key, required this.controller, this.initialExpense});
+
+  final TripController controller;
+  final StoredExpense? initialExpense;
+
+  bool get isEditing => initialExpense != null;
 
   @override
   State<AddExpensePage> createState() => _AddExpensePageState();
@@ -317,12 +508,27 @@ final class _AddExpensePageState extends State<AddExpensePage> {
   @override
   void initState() {
     super.initState();
-    _singlePayerId = _members.first.id;
+    final initial = widget.initialExpense;
+    _singlePayerId = initial?.payerMinorByMember.keys.firstOrNull ?? _members.first.id;
     for (final member in _members) {
-      _participants.add(member.id);
       _payerControllers[member.id] = TextEditingController();
       _splitControllers[member.id] = TextEditingController();
     }
+    if (initial == null) {
+      _participants.addAll(_members.map((member) => member.id));
+      return;
+    }
+    _titleController.text = initial.title;
+    _totalController.text = initial.totalMinor.toString();
+    _participants.addAll(initial.allocationMinorByMember.keys);
+    _multiplePayers = initial.payerMinorByMember.length > 1;
+    for (final entry in initial.payerMinorByMember.entries) {
+      _payerControllers[entry.key]?.text = entry.value.toString();
+    }
+    for (final entry in initial.allocationMinorByMember.entries) {
+      _splitControllers[entry.key]?.text = entry.value.toString();
+    }
+    _mode = ExpenseSplitMode.exact;
   }
 
   @override
@@ -396,12 +602,22 @@ final class _AddExpensePageState extends State<AddExpensePage> {
           ),
       };
 
-      await widget.controller.addExpense(
-        title: _titleController.text,
-        totalMinor: totalMinor,
-        payers: payers,
-        allocations: allocations,
-      );
+      if (widget.initialExpense == null) {
+        await widget.controller.addExpense(
+          title: _titleController.text,
+          totalMinor: totalMinor,
+          payers: payers,
+          allocations: allocations,
+        );
+      } else {
+        await widget.controller.updateExpense(
+          expenseId: widget.initialExpense!.id,
+          title: _titleController.text,
+          totalMinor: totalMinor,
+          payers: payers,
+          allocations: allocations,
+        );
+      }
       if (mounted) Navigator.of(context).pop();
     } catch (error) {
       if (mounted) _showError(context, error);
@@ -413,10 +629,19 @@ final class _AddExpensePageState extends State<AddExpensePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Add expense')),
+      appBar: AppBar(title: Text(widget.isEditing ? 'Edit expense' : 'Add expense')),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 120),
         children: [
+          if (widget.isEditing) ...[
+            const Card(
+              child: Padding(
+                padding: EdgeInsets.all(12),
+                child: Text('Editing uses the current final allocation as exact amounts. You can switch to another split method before saving.'),
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
           TextField(
             controller: _titleController,
             textInputAction: TextInputAction.next,
@@ -433,13 +658,13 @@ final class _AddExpensePageState extends State<AddExpensePage> {
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
             title: const Text('Multiple payers'),
-            subtitle: const Text('Enable when several members paid parts of the same bill.'),
+            subtitle: const Text('Use when several members paid parts of the same bill.'),
             value: _multiplePayers,
             onChanged: (value) => setState(() => _multiplePayers = value),
           ),
           if (!_multiplePayers)
             DropdownButtonFormField<String>(
-              value: _singlePayerId,
+              initialValue: _singlePayerId,
               decoration: const InputDecoration(labelText: 'Payer'),
               items: [
                 for (final member in _members) DropdownMenuItem(value: member.id, child: Text(member.name)),
@@ -479,7 +704,7 @@ final class _AddExpensePageState extends State<AddExpensePage> {
             ),
           const SizedBox(height: 16),
           DropdownButtonFormField<ExpenseSplitMode>(
-            value: _mode,
+            initialValue: _mode,
             decoration: const InputDecoration(labelText: 'Split method'),
             items: const [
               DropdownMenuItem(value: ExpenseSplitMode.equal, child: Text('Equal')),
@@ -514,9 +739,35 @@ final class _AddExpensePageState extends State<AddExpensePage> {
           FilledButton.icon(
             onPressed: _saving ? null : _save,
             icon: const Icon(Icons.check_rounded),
-            label: Text(_saving ? 'Saving…' : 'Save expense'),
+            label: Text(_saving ? 'Saving…' : widget.isEditing ? 'Save changes' : 'Save expense'),
           ),
         ],
+      ),
+    );
+  }
+}
+
+final class _MetricCard extends StatelessWidget {
+  const _MetricCard({required this.label, required this.value, required this.icon});
+
+  final String label;
+  final String value;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(icon),
+            const SizedBox(height: 10),
+            Text(value, style: Theme.of(context).textTheme.titleMedium),
+            Text(label, style: Theme.of(context).textTheme.bodySmall),
+          ],
+        ),
       ),
     );
   }
@@ -582,15 +833,78 @@ Future<void> _showAddMemberDialog(BuildContext context, TripController controlle
   }
 }
 
-Future<bool> _confirmReset(BuildContext context) async {
+Future<void> _showRenameTripDialog(BuildContext context, TripController controller) async {
+  final textController = TextEditingController(text: controller.trip!.name);
+  try {
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Rename crew'),
+        content: TextField(controller: textController, autofocus: true, decoration: const InputDecoration(labelText: 'Crew name')),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () async {
+              try {
+                await controller.renameTrip(textController.text);
+                if (dialogContext.mounted) Navigator.pop(dialogContext);
+              } catch (error) {
+                if (dialogContext.mounted) _showError(dialogContext, error);
+              }
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  } finally {
+    textController.dispose();
+  }
+}
+
+Future<void> _showRenameMemberDialog(BuildContext context, TripController controller, StoredMember member) async {
+  final textController = TextEditingController(text: member.name);
+  try {
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Rename member'),
+        content: TextField(controller: textController, autofocus: true, decoration: const InputDecoration(labelText: 'Display name')),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () async {
+              try {
+                await controller.renameMember(member.id, textController.text);
+                if (dialogContext.mounted) Navigator.pop(dialogContext);
+              } catch (error) {
+                if (dialogContext.mounted) _showError(dialogContext, error);
+              }
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  } finally {
+    textController.dispose();
+  }
+}
+
+Future<bool> _confirm(
+  BuildContext context, {
+  required String title,
+  required String message,
+  required String confirmLabel,
+}) async {
   return await showDialog<bool>(
         context: context,
         builder: (dialogContext) => AlertDialog(
-          title: const Text('Reset local trip?'),
-          content: const Text('This deletes the current trip and all local expenses from this phone.'),
+          title: Text(title),
+          content: Text(message),
           actions: [
             TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
-            FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Reset')),
+            FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: Text(confirmLabel)),
           ],
         ),
       ) ??
@@ -637,4 +951,32 @@ String _money(int value) {
     buffer.write(digits[i]);
   }
   return '${negative ? '-' : ''}$buffer';
+}
+
+String _payerSummary(TripController controller, StoredExpense expense) => expense.payerMinorByMember.entries
+    .map((entry) => '${controller.memberName(entry.key)} ${_money(entry.value)}')
+    .join(' + ');
+
+int _paidBy(StoredTrip trip, String memberId) => trip.expenses.fold(
+      0,
+      (sum, expense) => sum + (expense.payerMinorByMember[memberId] ?? 0),
+    );
+
+int _allocatedTo(StoredTrip trip, String memberId) => trip.expenses.fold(
+      0,
+      (sum, expense) => sum + (expense.allocationMinorByMember[memberId] ?? 0),
+    );
+
+String _dateTime(int milliseconds) {
+  if (milliseconds <= 0) return 'legacy data';
+  final value = DateTime.fromMillisecondsSinceEpoch(milliseconds).toLocal();
+  String two(int number) => number.toString().padLeft(2, '0');
+  return '${two(value.day)}/${two(value.month)}/${value.year} ${two(value.hour)}:${two(value.minute)}';
+}
+
+extension _FirstOrNull<E> on Iterable<E> {
+  E? get firstOrNull {
+    final iterator = this.iterator;
+    return iterator.moveNext() ? iterator.current : null;
+  }
 }

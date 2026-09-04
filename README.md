@@ -2,26 +2,30 @@
 
 **Offline-first group expense sharing for trips, friends, and everyday life.**
 
-SplitCrew is an Apache-2.0 open-source mobile app for recording shared expenses, splitting each bill fairly, and calculating who should pay whom. The long-term architecture supports an optional owner-hosted local group mode without requiring a public cloud server.
+SplitCrew is an Apache-2.0 open-source mobile app for recording shared expenses, splitting each bill fairly, and calculating who should pay whom. The architecture is intentionally local-first and can later add an owner-hosted local group mode without requiring a public cloud server.
 
-> **Status: v0.1.0 MVP alpha — Android test build available through GitHub Actions.**
+> **Status: v0.2.0-alpha local-hardening candidate — Android test APK is built by GitHub Actions.**
 
 ## What is testable now
 
-- Create a local trip/crew.
-- Add members without online accounts.
+- Create, rename, and delete a local trip/crew.
+- Add and rename members without online accounts.
+- Safely remove members that are not referenced by financial records.
 - Add expenses with one or multiple payers.
+- Edit and delete expenses.
+- Expense detail/audit view showing payers and final integer allocations.
 - Equal split.
 - Exact amount per person.
 - Percentage split using integer basis points internally.
 - Share/weight split.
 - Deterministic per-item split in the core engine.
-- Offline local persistence for the alpha app.
-- Per-member net balances.
+- SQLite persistence on Android with a normalized schema.
+- One-time import of v0.1 SharedPreferences local data.
+- UUID identifiers, timestamps, and entity versions prepared for future sync.
+- Per-member paid/share/net explanation.
 - Deterministic settlement/debt simplification.
-- Delete expenses and recalculate immediately.
 
-See [`docs/testing/mvp-alpha.md`](docs/testing/mvp-alpha.md) for the full test plan.
+See [`docs/testing/mvp-alpha.md`](docs/testing/mvp-alpha.md) for the alpha test plan.
 
 ## Install the Android alpha
 
@@ -64,7 +68,7 @@ flutter run
 Flutter UI
    │
    ▼
-Application state / local adapter
+TripController / application state
    │
    ├───────────────┐
    ▼               ▼
@@ -75,11 +79,15 @@ Domain        Split Engine
    Settlement Engine
            │
            ▼
-   Local persistence
+   TripRepository interface
            │
-     future sync adapter
-           │
-      Owner Host / Client
+      ┌────┴────┐
+      ▼         ▼
+   SQLite     Memory test adapter
+      │
+ future sync adapter
+      │
+ Owner Host / Client
 ```
 
 ### Dependency rules
@@ -89,14 +97,15 @@ Domain        Split Engine
 3. Every expense conserves money: `sum(payers) == total == sum(allocations)`.
 4. Split and settlement results are deterministic for identical input.
 5. Local use must remain possible without Internet access.
-6. Owner-hosted synchronization is added only after the local financial core is stable.
+6. Persistent entities carry UUIDs, timestamps, and versions before multi-device synchronization is introduced.
+7. Owner-hosted synchronization is added only after the local financial core and database are stable.
 
 ## Repository structure
 
 ```text
 splitcrew/
 ├── apps/
-│   └── mobile/                  # Flutter MVP source
+│   └── mobile/                  # Flutter Android-first app
 ├── packages/
 │   ├── domain/                  # Money, trip, member, expense invariants
 │   ├── split_engine/            # Equal/exact/%/shares/per-item allocation
@@ -114,14 +123,13 @@ splitcrew/
 
 ## Next milestones
 
-The alpha intentionally does **not** pretend to have features that are not implemented yet. Next priorities are:
+The next product slice is deliberately focused on evidence and repayment rather than networking:
 
-1. SQLite/Drift production persistence and migrations.
-2. Receipt image capture.
-3. Payment-account abstraction and VietQR.
-4. Exportable trip summary.
-5. Owner-hosted LAN mode with invite QR, roles, sync queue, versions, and conflict handling.
-6. OCR/item assignment after the core UX is stable.
+1. Receipt image capture/attachment.
+2. Payment-account abstraction and VietQR.
+3. Shareable repayment QR and trip summary.
+4. Owner-hosted LAN mode with invite QR, roles, sync queue, versions, and conflict handling.
+5. OCR/item assignment after the core UX is stable.
 
 See [`ROADMAP.md`](ROADMAP.md) for details.
 
@@ -131,6 +139,7 @@ See [`ROADMAP.md`](ROADMAP.md) for details.
 - [`docs/architecture/local-host-sync.md`](docs/architecture/local-host-sync.md)
 - [`docs/database/schema.md`](docs/database/schema.md)
 - [`docs/protocol/sync-protocol.md`](docs/protocol/sync-protocol.md)
+- [`docs/product/v0.2.0-alpha-plan.md`](docs/product/v0.2.0-alpha-plan.md)
 - [`docs/testing/mvp-alpha.md`](docs/testing/mvp-alpha.md)
 
 ## Contributing

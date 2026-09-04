@@ -33,7 +33,9 @@ SplitCrew is developed in vertical milestones. Each milestone must keep the mone
 - [x] Per-member balance calculation
 - [x] Settlement generation
 - [x] Deterministic debt simplification
-- [ ] Rich settlement audit/explanation model
+- [x] User-facing paid/share/net explanation
+- [x] Expense-level payer/allocation audit view
+- [ ] Persistent settlement confirmation history
 
 ## M4 — Local Mobile MVP
 
@@ -44,11 +46,16 @@ SplitCrew is developed in vertical milestones. Each milestone must keep the mone
 - [x] One or multiple payers
 - [x] Equal/exact/percentage/share split UI
 - [x] Balance and settlement screens
-- [x] Offline alpha persistence
 - [x] Automated Android debug APK artifact
-- [ ] SQLite/Drift persistence and migrations
-- [ ] Edit trip/member/expense flows
-- [ ] Production UX/accessibility pass
+- [x] SQLite persistence with normalized tables
+- [x] One-time v0.1 SharedPreferences import
+- [x] UUID identifiers, timestamps, and versions
+- [x] Rename/delete trip flow
+- [x] Rename/remove member flow with reference guards
+- [x] Edit expense flow
+- [x] Expense detail/audit flow
+- [ ] Backup/export/import UX
+- [ ] Production accessibility/usability pass
 
 ## M5 — Receipt & Payment
 
@@ -70,9 +77,9 @@ SplitCrew is developed in vertical milestones. Each milestone must keep the mone
 ## M7 — Offline Synchronization
 
 - [ ] Local operation queue
-- [ ] UUID identifiers suitable for multi-device creation
-- [ ] Entity versioning
-- [ ] Optimistic concurrency checks
+- [x] UUID identifiers suitable for multi-device creation
+- [x] Base entity version fields
+- [ ] Optimistic concurrency checks across devices
 - [ ] Conflict UX
 - [ ] Host reconnection/resync
 - [ ] Host recovery/export-import strategy
@@ -89,7 +96,7 @@ SplitCrew is developed in vertical milestones. Each milestone must keep the mone
 
 - [x] Automated Android debug APK build
 - [ ] Signed GitHub Release APK
-- [ ] Upgrade/migration tests
+- [ ] Upgrade/migration tests across released schemas
 - [ ] Accessibility review
 - [ ] Privacy review
 - [ ] Beta feedback cycle

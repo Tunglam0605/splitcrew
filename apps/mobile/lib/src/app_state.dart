@@ -4,139 +4,22 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:splitcrew_domain/splitcrew_domain.dart';
 import 'package:splitcrew_settlement_engine/splitcrew_settlement_engine.dart';
+import 'package:uuid/uuid.dart';
 
-final class StoredMember {
-  const StoredMember({required this.id, required this.name, required this.isOwner});
+import 'local_store.dart';
+import 'stored_models.dart';
 
-  final String id;
-  final String name;
-  final bool isOwner;
-
-  Map<String, Object?> toJson() => {'id': id, 'name': name, 'isOwner': isOwner};
-
-  factory StoredMember.fromJson(Map<String, dynamic> json) => StoredMember(
-        id: json['id'] as String,
-        name: json['name'] as String,
-        isOwner: json['isOwner'] as bool? ?? false,
-      );
-}
-
-final class StoredExpense {
-  StoredExpense({
-    required this.id,
-    required this.title,
-    required this.totalMinor,
-    required Map<String, int> payerMinorByMember,
-    required Map<String, int> allocationMinorByMember,
-    required this.createdByMemberId,
-  })  : payerMinorByMember = Map.unmodifiable(payerMinorByMember),
-        allocationMinorByMember = Map.unmodifiable(allocationMinorByMember);
-
-  final String id;
-  final String title;
-  final int totalMinor;
-  final Map<String, int> payerMinorByMember;
-  final Map<String, int> allocationMinorByMember;
-  final String createdByMemberId;
-
-  Map<String, Object?> toJson() => {
-        'id': id,
-        'title': title,
-        'totalMinor': totalMinor,
-        'payers': payerMinorByMember,
-        'allocations': allocationMinorByMember,
-        'createdByMemberId': createdByMemberId,
-      };
-
-  factory StoredExpense.fromJson(Map<String, dynamic> json) => StoredExpense(
-        id: json['id'] as String,
-        title: json['title'] as String,
-        totalMinor: json['totalMinor'] as int,
-        payerMinorByMember: _intMap(json['payers']),
-        allocationMinorByMember: _intMap(json['allocations']),
-        createdByMemberId: json['createdByMemberId'] as String,
-      );
-
-  Expense toDomain({required String tripId, required String currencyCode}) {
-    return Expense(
-      id: id,
-      tripId: tripId,
-      title: title,
-      total: Money(minorUnits: totalMinor, currencyCode: currencyCode),
-      payers: [
-        for (final entry in payerMinorByMember.entries)
-          ExpensePayer(
-            memberId: entry.key,
-            amount: Money(minorUnits: entry.value, currencyCode: currencyCode),
-          ),
-      ],
-      allocations: [
-        for (final entry in allocationMinorByMember.entries)
-          ExpenseAllocation(
-            memberId: entry.key,
-            amount: Money(minorUnits: entry.value, currencyCode: currencyCode),
-          ),
-      ],
-      createdByMemberId: createdByMemberId,
-    );
-  }
-}
-
-final class StoredTrip {
-  StoredTrip({
-    required this.id,
-    required this.name,
-    required this.currencyCode,
-    required List<StoredMember> members,
-    required List<StoredExpense> expenses,
-  })  : members = List.unmodifiable(members),
-        expenses = List.unmodifiable(expenses);
-
-  final String id;
-  final String name;
-  final String currencyCode;
-  final List<StoredMember> members;
-  final List<StoredExpense> expenses;
-
-  StoredTrip copyWith({
-    String? name,
-    List<StoredMember>? members,
-    List<StoredExpense>? expenses,
-  }) {
-    return StoredTrip(
-      id: id,
-      name: name ?? this.name,
-      currencyCode: currencyCode,
-      members: members ?? this.members,
-      expenses: expenses ?? this.expenses,
-    );
-  }
-
-  Map<String, Object?> toJson() => {
-        'id': id,
-        'name': name,
-        'currencyCode': currencyCode,
-        'members': members.map((member) => member.toJson()).toList(),
-        'expenses': expenses.map((expense) => expense.toJson()).toList(),
-      };
-
-  factory StoredTrip.fromJson(Map<String, dynamic> json) => StoredTrip(
-        id: json['id'] as String,
-        name: json['name'] as String,
-        currencyCode: json['currencyCode'] as String? ?? 'VND',
-        members: (json['members'] as List<dynamic>)
-            .map((item) => StoredMember.fromJson(Map<String, dynamic>.from(item as Map)))
-            .toList(),
-        expenses: (json['expenses'] as List<dynamic>? ?? const [])
-            .map((item) => StoredExpense.fromJson(Map<String, dynamic>.from(item as Map)))
-            .toList(),
-      );
-}
+export 'stored_models.dart';
 
 final class TripController extends ChangeNotifier {
-  static const _storageKey = 'splitcrew.trip.v1';
+  static const _legacyStorageKey = 'splitcrew.trip.v1';
 
-  SharedPreferences? _preferences;
+  TripController({TripRepository? repository, Uuid? uuid})
+      : _repository = repository ?? SqliteTripRepository(),
+        _uuid = uuid ?? const Uuid();
+
+  final TripRepository _repository;
+  final Uuid _uuid;
   StoredTrip? _trip;
   String? _loadError;
 
@@ -146,12 +29,10 @@ final class TripController extends ChangeNotifier {
 
   Future<void> load() async {
     try {
-      _preferences = await SharedPreferences.getInstance();
-      final raw = _preferences!.getString(_storageKey);
-      if (raw != null && raw.isNotEmpty) {
-        _trip = StoredTrip.fromJson(Map<String, dynamic>.from(jsonDecode(raw) as Map));
-        _validateStoredTrip(_trip!);
-      }
+      _trip = await _repository.loadCurrent();
+      if (_trip == null) await _importLegacyPreferencesIfPresent();
+      if (_trip != null) _validateStoredTrip(_trip!);
+      _loadError = null;
     } catch (error) {
       _trip = null;
       _loadError = 'Saved trip could not be loaded: $error';
@@ -165,31 +46,89 @@ final class TripController extends ChangeNotifier {
     if (cleanName.isEmpty || cleanOwner.isEmpty) {
       throw ArgumentError('Trip name and owner name are required.');
     }
-    final tripId = _newId('trip');
-    final ownerId = _newId('member');
+    final now = _nowMs();
+    final tripId = _uuid.v4();
+    final ownerId = _uuid.v4();
     _trip = StoredTrip(
       id: tripId,
       name: cleanName,
       currencyCode: 'VND',
-      members: [StoredMember(id: ownerId, name: cleanOwner, isOwner: true)],
+      members: [
+        StoredMember(
+          id: ownerId,
+          name: cleanOwner,
+          isOwner: true,
+          createdAtMs: now,
+          updatedAtMs: now,
+        ),
+      ],
       expenses: const [],
+      createdAtMs: now,
+      updatedAtMs: now,
     );
     await _persist();
     notifyListeners();
   }
 
+  Future<void> renameTrip(String name) async {
+    final current = _requireTrip();
+    final clean = name.trim();
+    if (clean.isEmpty) throw ArgumentError('Trip name is required.');
+    _trip = _touchTrip(current, name: clean);
+    await _persistAndNotify();
+  }
+
   Future<void> addMember(String name) async {
     final current = _requireTrip();
     final clean = name.trim();
-    if (clean.isEmpty) throw ArgumentError('Member name is required.');
-    if (current.members.any((member) => member.name.toLowerCase() == clean.toLowerCase())) {
-      throw ArgumentError('A member with this name already exists.');
-    }
-    _trip = current.copyWith(
-      members: [...current.members, StoredMember(id: _newId('member'), name: clean, isOwner: false)],
+    _validateUniqueMemberName(current, clean);
+    final now = _nowMs();
+    _trip = _touchTrip(
+      current,
+      members: [
+        ...current.members,
+        StoredMember(
+          id: _uuid.v4(),
+          name: clean,
+          isOwner: false,
+          createdAtMs: now,
+          updatedAtMs: now,
+        ),
+      ],
     );
-    await _persist();
-    notifyListeners();
+    await _persistAndNotify();
+  }
+
+  Future<void> renameMember(String memberId, String name) async {
+    final current = _requireTrip();
+    final clean = name.trim();
+    _validateUniqueMemberName(current, clean, exceptId: memberId);
+    final member = current.members.where((item) => item.id == memberId).firstOrNull;
+    if (member == null) throw ArgumentError('Member not found.');
+    final updated = member.copyWith(name: clean, updatedAtMs: _nowMs(), version: member.version + 1);
+    _trip = _touchTrip(
+      current,
+      members: [for (final item in current.members) if (item.id == memberId) updated else item],
+    );
+    await _persistAndNotify();
+  }
+
+  Future<void> removeMember(String memberId) async {
+    final current = _requireTrip();
+    final member = current.members.where((item) => item.id == memberId).firstOrNull;
+    if (member == null) throw ArgumentError('Member not found.');
+    if (member.isOwner) throw ArgumentError('The owner cannot be removed.');
+    final referenced = current.expenses.any(
+      (expense) => expense.payerMinorByMember.containsKey(memberId) || expense.allocationMinorByMember.containsKey(memberId),
+    );
+    if (referenced) {
+      throw ArgumentError('This member is referenced by existing expenses. Edit or remove those expenses first.');
+    }
+    _trip = _touchTrip(
+      current,
+      members: current.members.where((item) => item.id != memberId).toList(),
+    );
+    await _persistAndNotify();
   }
 
   Future<void> addExpense({
@@ -199,60 +138,66 @@ final class TripController extends ChangeNotifier {
     required List<ExpenseAllocation> allocations,
   }) async {
     final current = _requireTrip();
-    final cleanTitle = title.trim();
-    if (cleanTitle.isEmpty) throw ArgumentError('Expense title is required.');
-    if (totalMinor <= 0) throw ArgumentError('Expense total must be greater than zero.');
-    if (payers.isEmpty) throw ArgumentError('At least one payer is required.');
-
-    final memberIds = current.members.map((member) => member.id).toSet();
-    final referencedIds = <String>{
-      ...payers.map((payer) => payer.memberId),
-      ...allocations.map((allocation) => allocation.memberId),
-    };
-    if (!memberIds.containsAll(referencedIds)) {
-      throw ArgumentError('Expense references a member outside the trip.');
-    }
-
-    final id = _newId('expense');
-    final createdBy = payers.first.memberId;
-    final expense = Expense(
-      id: id,
-      tripId: current.id,
-      title: cleanTitle,
-      total: Money(minorUnits: totalMinor, currencyCode: current.currencyCode),
+    final now = _nowMs();
+    final stored = _validatedExpense(
+      current: current,
+      id: _uuid.v4(),
+      title: title,
+      totalMinor: totalMinor,
       payers: payers,
       allocations: allocations,
-      createdByMemberId: createdBy,
+      createdAtMs: now,
+      updatedAtMs: now,
+      version: 0,
     );
+    _trip = _touchTrip(current, expenses: [...current.expenses, stored]);
+    await _persistAndNotify();
+  }
 
-    final stored = StoredExpense(
-      id: expense.id,
-      title: expense.title,
-      totalMinor: expense.total.minorUnits,
-      payerMinorByMember: {for (final payer in expense.payers) payer.memberId: payer.amount.minorUnits},
-      allocationMinorByMember: {
-        for (final allocation in expense.allocations) allocation.memberId: allocation.amount.minorUnits,
-      },
-      createdByMemberId: expense.createdByMemberId,
+  Future<void> updateExpense({
+    required String expenseId,
+    required String title,
+    required int totalMinor,
+    required List<ExpensePayer> payers,
+    required List<ExpenseAllocation> allocations,
+  }) async {
+    final current = _requireTrip();
+    final old = current.expenses.where((item) => item.id == expenseId).firstOrNull;
+    if (old == null) throw ArgumentError('Expense not found.');
+    final stored = _validatedExpense(
+      current: current,
+      id: old.id,
+      title: title,
+      totalMinor: totalMinor,
+      payers: payers,
+      allocations: allocations,
+      createdAtMs: old.createdAtMs,
+      updatedAtMs: _nowMs(),
+      version: old.version + 1,
     );
-    _trip = current.copyWith(expenses: [...current.expenses, stored]);
-    await _persist();
-    notifyListeners();
+    _trip = _touchTrip(
+      current,
+      expenses: [for (final expense in current.expenses) if (expense.id == expenseId) stored else expense],
+    );
+    await _persistAndNotify();
   }
 
   Future<void> removeExpense(String expenseId) async {
     final current = _requireTrip();
-    _trip = current.copyWith(
+    if (!current.expenses.any((expense) => expense.id == expenseId)) return;
+    _trip = _touchTrip(
+      current,
       expenses: current.expenses.where((expense) => expense.id != expenseId).toList(),
     );
-    await _persist();
-    notifyListeners();
+    await _persistAndNotify();
   }
 
   Future<void> reset() async {
     _trip = null;
     _loadError = null;
-    await _preferences?.remove(_storageKey);
+    await _repository.deleteCurrent();
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.remove(_legacyStorageKey);
     notifyListeners();
   }
 
@@ -287,6 +232,84 @@ final class TripController extends ChangeNotifier {
     return id;
   }
 
+  StoredExpense? expenseById(String id) {
+    final current = _trip;
+    if (current == null) return null;
+    return current.expenses.where((expense) => expense.id == id).firstOrNull;
+  }
+
+  StoredExpense _validatedExpense({
+    required StoredTrip current,
+    required String id,
+    required String title,
+    required int totalMinor,
+    required List<ExpensePayer> payers,
+    required List<ExpenseAllocation> allocations,
+    required int createdAtMs,
+    required int updatedAtMs,
+    required int version,
+  }) {
+    final cleanTitle = title.trim();
+    if (cleanTitle.isEmpty) throw ArgumentError('Expense title is required.');
+    if (totalMinor <= 0) throw ArgumentError('Expense total must be greater than zero.');
+    if (payers.isEmpty) throw ArgumentError('At least one payer is required.');
+    final memberIds = current.members.map((member) => member.id).toSet();
+    final referencedIds = <String>{
+      ...payers.map((payer) => payer.memberId),
+      ...allocations.map((allocation) => allocation.memberId),
+    };
+    if (!memberIds.containsAll(referencedIds)) {
+      throw ArgumentError('Expense references a member outside the trip.');
+    }
+    final createdBy = payers.first.memberId;
+    final expense = Expense(
+      id: id,
+      tripId: current.id,
+      title: cleanTitle,
+      total: Money(minorUnits: totalMinor, currencyCode: current.currencyCode),
+      payers: payers,
+      allocations: allocations,
+      createdByMemberId: createdBy,
+      version: version,
+    );
+    return StoredExpense(
+      id: expense.id,
+      title: expense.title,
+      totalMinor: expense.total.minorUnits,
+      payerMinorByMember: {for (final payer in expense.payers) payer.memberId: payer.amount.minorUnits},
+      allocationMinorByMember: {
+        for (final allocation in expense.allocations) allocation.memberId: allocation.amount.minorUnits,
+      },
+      createdByMemberId: expense.createdByMemberId,
+      createdAtMs: createdAtMs,
+      updatedAtMs: updatedAtMs,
+      version: version,
+    );
+  }
+
+  StoredTrip _touchTrip(
+    StoredTrip current, {
+    String? name,
+    List<StoredMember>? members,
+    List<StoredExpense>? expenses,
+  }) =>
+      current.copyWith(
+        name: name,
+        members: members,
+        expenses: expenses,
+        updatedAtMs: _nowMs(),
+        version: current.version + 1,
+      );
+
+  void _validateUniqueMemberName(StoredTrip current, String clean, {String? exceptId}) {
+    if (clean.isEmpty) throw ArgumentError('Member name is required.');
+    if (current.members.any(
+      (member) => member.id != exceptId && member.name.toLowerCase() == clean.toLowerCase(),
+    )) {
+      throw ArgumentError('A member with this name already exists.');
+    }
+  }
+
   StoredTrip _requireTrip() {
     final current = _trip;
     if (current == null) throw StateError('No trip has been created.');
@@ -300,25 +323,81 @@ final class TripController extends ChangeNotifier {
     if (trip.members.isEmpty || !trip.members.any((member) => member.isOwner)) {
       throw const FormatException('Trip must contain an owner.');
     }
+    final ids = trip.members.map((member) => member.id).toSet();
+    if (ids.length != trip.members.length) throw const FormatException('Duplicate member identifiers.');
     for (final expense in trip.expenses) {
       expense.toDomain(tripId: trip.id, currencyCode: trip.currencyCode);
+      if (!ids.containsAll(expense.payerMinorByMember.keys) || !ids.containsAll(expense.allocationMinorByMember.keys)) {
+        throw const FormatException('Expense references an unknown member.');
+      }
     }
+  }
+
+  Future<void> _persistAndNotify() async {
+    await _persist();
+    notifyListeners();
   }
 
   Future<void> _persist() async {
-    _preferences ??= await SharedPreferences.getInstance();
     final current = _trip;
     if (current == null) {
-      await _preferences!.remove(_storageKey);
-      return;
+      await _repository.deleteCurrent();
+    } else {
+      await _repository.save(current);
     }
-    await _preferences!.setString(_storageKey, jsonEncode(current.toJson()));
   }
 
-  String _newId(String prefix) => '$prefix-${DateTime.now().microsecondsSinceEpoch}';
+  Future<void> _importLegacyPreferencesIfPresent() async {
+    final preferences = await SharedPreferences.getInstance();
+    final raw = preferences.getString(_legacyStorageKey);
+    if (raw == null || raw.isEmpty) return;
+    final decoded = StoredTrip.fromJson(Map<String, dynamic>.from(jsonDecode(raw) as Map));
+    final now = _nowMs();
+    final normalized = StoredTrip(
+      id: decoded.id,
+      name: decoded.name,
+      currencyCode: decoded.currencyCode,
+      members: [
+        for (final member in decoded.members)
+          StoredMember(
+            id: member.id,
+            name: member.name,
+            isOwner: member.isOwner,
+            createdAtMs: member.createdAtMs == 0 ? now : member.createdAtMs,
+            updatedAtMs: member.updatedAtMs == 0 ? now : member.updatedAtMs,
+            version: member.version,
+          ),
+      ],
+      expenses: [
+        for (final expense in decoded.expenses)
+          StoredExpense(
+            id: expense.id,
+            title: expense.title,
+            totalMinor: expense.totalMinor,
+            payerMinorByMember: expense.payerMinorByMember,
+            allocationMinorByMember: expense.allocationMinorByMember,
+            createdByMemberId: expense.createdByMemberId,
+            createdAtMs: expense.createdAtMs == 0 ? now : expense.createdAtMs,
+            updatedAtMs: expense.updatedAtMs == 0 ? now : expense.updatedAtMs,
+            version: expense.version,
+          ),
+      ],
+      createdAtMs: decoded.createdAtMs == 0 ? now : decoded.createdAtMs,
+      updatedAtMs: decoded.updatedAtMs == 0 ? now : decoded.updatedAtMs,
+      version: decoded.version,
+    );
+    _validateStoredTrip(normalized);
+    await _repository.save(normalized);
+    await preferences.remove(_legacyStorageKey);
+    _trip = normalized;
+  }
+
+  int _nowMs() => DateTime.now().millisecondsSinceEpoch;
 }
 
-Map<String, int> _intMap(Object? raw) {
-  final map = Map<String, dynamic>.from(raw as Map);
-  return map.map((key, value) => MapEntry(key, value as int));
+extension _FirstOrNull<E> on Iterable<E> {
+  E? get firstOrNull {
+    final iterator = this.iterator;
+    return iterator.moveNext() ? iterator.current : null;
+  }
 }
