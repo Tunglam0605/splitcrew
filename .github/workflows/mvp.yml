@@ -34,6 +34,18 @@ jobs:
       - run: dart analyze --fatal-infos
       - run: dart test
 
+  payment-qr:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/payment_qr
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+      - run: dart pub get
+      - run: dart analyze --fatal-infos
+      - run: dart test
+
   android-mvp:
     runs-on: ubuntu-latest
     steps:
