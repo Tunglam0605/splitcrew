@@ -38,7 +38,7 @@ final class SplitCrewApp extends StatelessWidget {
               Positioned.fill(child: page),
               Positioned(
                 left: 16,
-                bottom: 16,
+                bottom: controller.hasTrip ? 72 : 16,
                 child: SafeArea(
                   child: AnimatedBuilder(
                     animation: updates,
