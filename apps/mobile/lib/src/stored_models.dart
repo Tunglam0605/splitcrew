@@ -103,6 +103,54 @@ final class StoredPaymentAccount {
       );
 }
 
+final class StoredReceiptAsset {
+  const StoredReceiptAsset({
+    required this.id,
+    required this.expenseId,
+    required this.localPath,
+    required this.sha256,
+    required this.originalName,
+    required this.mimeType,
+    required this.sizeBytes,
+    this.createdAtMs = 0,
+    this.version = 0,
+  });
+
+  final String id;
+  final String expenseId;
+  final String localPath;
+  final String sha256;
+  final String originalName;
+  final String mimeType;
+  final int sizeBytes;
+  final int createdAtMs;
+  final int version;
+
+  Map<String, Object?> toJson() => {
+        'id': id,
+        'expenseId': expenseId,
+        'localPath': localPath,
+        'sha256': sha256,
+        'originalName': originalName,
+        'mimeType': mimeType,
+        'sizeBytes': sizeBytes,
+        'createdAtMs': createdAtMs,
+        'version': version,
+      };
+
+  factory StoredReceiptAsset.fromJson(Map<String, dynamic> json) => StoredReceiptAsset(
+        id: json['id'] as String,
+        expenseId: json['expenseId'] as String,
+        localPath: json['localPath'] as String,
+        sha256: json['sha256'] as String,
+        originalName: json['originalName'] as String? ?? 'receipt',
+        mimeType: json['mimeType'] as String? ?? 'image/jpeg',
+        sizeBytes: json['sizeBytes'] as int? ?? 0,
+        createdAtMs: json['createdAtMs'] as int? ?? 0,
+        version: json['version'] as int? ?? 0,
+      );
+}
+
 final class StoredExpense {
   StoredExpense({
     required this.id,
@@ -111,11 +159,13 @@ final class StoredExpense {
     required Map<String, int> payerMinorByMember,
     required Map<String, int> allocationMinorByMember,
     required this.createdByMemberId,
+    List<StoredReceiptAsset> receipts = const [],
     this.createdAtMs = 0,
     this.updatedAtMs = 0,
     this.version = 0,
   })  : payerMinorByMember = Map.unmodifiable(payerMinorByMember),
-        allocationMinorByMember = Map.unmodifiable(allocationMinorByMember);
+        allocationMinorByMember = Map.unmodifiable(allocationMinorByMember),
+        receipts = List.unmodifiable(receipts);
 
   final String id;
   final String title;
@@ -123,9 +173,32 @@ final class StoredExpense {
   final Map<String, int> payerMinorByMember;
   final Map<String, int> allocationMinorByMember;
   final String createdByMemberId;
+  final List<StoredReceiptAsset> receipts;
   final int createdAtMs;
   final int updatedAtMs;
   final int version;
+
+  StoredExpense copyWith({
+    String? title,
+    int? totalMinor,
+    Map<String, int>? payerMinorByMember,
+    Map<String, int>? allocationMinorByMember,
+    List<StoredReceiptAsset>? receipts,
+    int? updatedAtMs,
+    int? version,
+  }) =>
+      StoredExpense(
+        id: id,
+        title: title ?? this.title,
+        totalMinor: totalMinor ?? this.totalMinor,
+        payerMinorByMember: payerMinorByMember ?? this.payerMinorByMember,
+        allocationMinorByMember: allocationMinorByMember ?? this.allocationMinorByMember,
+        createdByMemberId: createdByMemberId,
+        receipts: receipts ?? this.receipts,
+        createdAtMs: createdAtMs,
+        updatedAtMs: updatedAtMs ?? this.updatedAtMs,
+        version: version ?? this.version,
+      );
 
   Map<String, Object?> toJson() => {
         'id': id,
@@ -134,6 +207,7 @@ final class StoredExpense {
         'payers': payerMinorByMember,
         'allocations': allocationMinorByMember,
         'createdByMemberId': createdByMemberId,
+        'receipts': receipts.map((receipt) => receipt.toJson()).toList(),
         'createdAtMs': createdAtMs,
         'updatedAtMs': updatedAtMs,
         'version': version,
@@ -146,6 +220,9 @@ final class StoredExpense {
         payerMinorByMember: _intMap(json['payers']),
         allocationMinorByMember: _intMap(json['allocations']),
         createdByMemberId: json['createdByMemberId'] as String,
+        receipts: (json['receipts'] as List<dynamic>? ?? const [])
+            .map((item) => StoredReceiptAsset.fromJson(Map<String, dynamic>.from(item as Map)))
+            .toList(),
         createdAtMs: json['createdAtMs'] as int? ?? 0,
         updatedAtMs: json['updatedAtMs'] as int? ?? 0,
         version: json['version'] as int? ?? 0,
