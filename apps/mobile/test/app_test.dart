@@ -50,6 +50,51 @@ void main() {
     expect(preferences.getString('splitcrew.trip.v1'), isNull);
   });
 
+  test('stores and reloads a safe payment account profile', () async {
+    final repository = MemoryTripRepository();
+    final first = TripController(repository: repository);
+    await first.load();
+    await first.createTrip(name: 'Trip', ownerName: 'Lam');
+    final ownerId = first.trip!.members.single.id;
+    await first.upsertPaymentAccount(
+      memberId: ownerId,
+      holderName: 'NGUYEN VAN A',
+      bankBin: '970422',
+      accountIdentifier: '5566778899',
+    );
+    final second = TripController(repository: repository);
+    await second.load();
+    final account = second.paymentAccountForMember(ownerId);
+    expect(account, isNotNull);
+    expect(account!.provider, PaymentAccountProvider.vietQrBank);
+    expect(account.routingIdentifier, '970422');
+    expect(account.accountIdentifier, '5566778899');
+  });
+
+  test('updates payment account without changing its identity', () async {
+    final value = controller();
+    await value.load();
+    await value.createTrip(name: 'Trip', ownerName: 'Lam');
+    final ownerId = value.trip!.members.single.id;
+    await value.upsertPaymentAccount(
+      memberId: ownerId,
+      holderName: 'NGUYEN VAN A',
+      bankBin: '970422',
+      accountIdentifier: '1111222233',
+    );
+    final first = value.paymentAccountForMember(ownerId)!;
+    await value.upsertPaymentAccount(
+      memberId: ownerId,
+      holderName: 'NGUYEN VAN A',
+      bankBin: '970422',
+      accountIdentifier: '9999888877',
+    );
+    final second = value.paymentAccountForMember(ownerId)!;
+    expect(second.id, first.id);
+    expect(second.version, first.version + 1);
+    expect(second.accountIdentifier, '9999888877');
+  });
+
   test('adds expense and calculates settlement', () async {
     final value = controller();
     await value.load();
@@ -83,14 +128,21 @@ void main() {
     expect(value.trip!.version, greaterThan(initialTripVersion));
   });
 
-  test('removes an unreferenced non-owner member', () async {
+  test('removes an unreferenced non-owner member and its payment profile', () async {
     final value = controller();
     await value.load();
     await value.createTrip(name: 'Trip', ownerName: 'Lam');
     await value.addMember('Hoang');
     final memberId = value.trip!.members.last.id;
+    await value.upsertPaymentAccount(
+      memberId: memberId,
+      holderName: 'HOANG',
+      bankBin: '970422',
+      accountIdentifier: '5566778899',
+    );
     await value.removeMember(memberId);
     expect(value.trip!.members, hasLength(1));
+    expect(value.paymentAccountForMember(memberId), isNull);
   });
 
   test('rejects removing a member referenced by an expense', () async {
