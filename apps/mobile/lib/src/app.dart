@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'app_state.dart';
 import 'home_page.dart';
+import 'payment_ui.dart';
 
 final class SplitCrewApp extends StatelessWidget {
   const SplitCrewApp({super.key, required this.controller});
@@ -24,7 +25,7 @@ final class SplitCrewApp extends StatelessWidget {
           if (!controller.hasTrip) {
             return CreateTripPage(controller: controller, loadError: controller.loadError);
           }
-          return TripDashboard(controller: controller);
+          return TripWorkspace(controller: controller);
         },
       ),
     );
