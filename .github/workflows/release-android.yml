@@ -1,0 +1,141 @@
+name: Android signed release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release-android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.2'
+          channel: stable
+          cache: true
+
+      - name: Validate tag matches app version
+        shell: bash
+        run: |
+          set -euo pipefail
+          declared="$(awk '/^version:/ {print $2}' apps/mobile/pubspec.yaml)"
+          version="${declared%%+*}"
+          if [[ "v${version}" != "${GITHUB_REF_NAME}" ]]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match apps/mobile version ${version}." >&2
+            exit 1
+          fi
+
+      - name: Require release signing secrets
+        shell: bash
+        env:
+          KEYSTORE_B64: ${{ secrets.SPLITCREW_ANDROID_KEYSTORE_B64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.SPLITCREW_ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.SPLITCREW_ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.SPLITCREW_ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for value in KEYSTORE_B64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            if [[ -z "${!value:-}" ]]; then
+              echo "Missing required secret: ${value}" >&2
+              exit 1
+            fi
+          done
+
+      - name: Generate Android platform scaffold
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          flutter create \
+            --platforms=android \
+            --org io.github.tunglam0605 \
+            --project-name splitcrew_mobile \
+            "$tmp/mobile"
+          rm -rf apps/mobile/android
+          cp -R "$tmp/mobile/android" apps/mobile/android
+          cp "$tmp/mobile/.metadata" apps/mobile/.metadata
+
+      - name: Configure updater permission and stable signing
+        shell: bash
+        env:
+          KEYSTORE_B64: ${{ secrets.SPLITCREW_ANDROID_KEYSTORE_B64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.SPLITCREW_ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.SPLITCREW_ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.SPLITCREW_ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          manifest="apps/mobile/android/app/src/main/AndroidManifest.xml"
+          python - "$manifest" <<'PY'
+          from pathlib import Path
+          import sys
+          manifest = Path(sys.argv[1])
+          text = manifest.read_text()
+          permission = '    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />\n'
+          if 'android.permission.REQUEST_INSTALL_PACKAGES' not in text:
+              text = text.replace('<application', permission + '    <application', 1)
+          manifest.write_text(text)
+          PY
+
+          echo "$KEYSTORE_B64" | base64 --decode > apps/mobile/android/app/splitcrew-release.jks
+          cat > apps/mobile/android/key.properties <<EOF
+          storePassword=$KEYSTORE_PASSWORD
+          keyPassword=$KEY_PASSWORD
+          keyAlias=$KEY_ALIAS
+          storeFile=splitcrew-release.jks
+          EOF
+
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('apps/mobile/android/app/build.gradle.kts')
+          text = path.read_text()
+          imports = 'import java.util.Properties\nimport java.io.FileInputStream\n\n'
+          if 'import java.util.Properties' not in text:
+              text = imports + text
+          marker = 'android {\n'
+          setup = '''val keystoreProperties = Properties()\nval keystorePropertiesFile = rootProject.file("key.properties")\nkeystoreProperties.load(FileInputStream(keystorePropertiesFile))\n\n'''
+          if 'val keystoreProperties = Properties()' not in text:
+              text = text.replace(marker, setup + marker, 1)
+          signing = '''    signingConfigs {\n        create("release") {\n            keyAlias = keystoreProperties["keyAlias"] as String\n            keyPassword = keystoreProperties["keyPassword"] as String\n            storeFile = file(keystoreProperties["storeFile"] as String)\n            storePassword = keystoreProperties["storePassword"] as String\n        }\n    }\n\n'''
+          if 'create("release")' not in text:
+              text = text.replace(marker, marker + signing, 1)
+          text = text.replace(
+              'signingConfig = signingConfigs.getByName("debug")',
+              'signingConfig = signingConfigs.getByName("release")',
+          )
+          path.write_text(text)
+          PY
+
+      - name: Install dependencies and validate
+        working-directory: apps/mobile
+        run: |
+          flutter pub get
+          flutter analyze --no-fatal-infos
+          flutter test
+
+      - name: Build signed release APK
+        working-directory: apps/mobile
+        run: flutter build apk --release
+
+      - name: Prepare release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          apk="dist/SplitCrew-${GITHUB_REF_NAME}-android.apk"
+          cp apps/mobile/build/app/outputs/flutter-apk/app-release.apk "$apk"
+          sha256sum "$apk" > "${apk}.sha256"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          generate_release_notes: true
+          files: |
+            dist/SplitCrew-${{ github.ref_name }}-android.apk
+            dist/SplitCrew-${{ github.ref_name }}-android.apk.sha256
