@@ -21,7 +21,20 @@ rm -rf "$mobile_dir/android"
 cp -R "$tmp/mobile/android" "$mobile_dir/android"
 cp "$tmp/mobile/.metadata" "$mobile_dir/.metadata"
 
+manifest="$mobile_dir/android/app/src/main/AndroidManifest.xml"
+if ! grep -q 'android.permission.REQUEST_INSTALL_PACKAGES' "$manifest"; then
+  python3 - "$manifest" <<'PY'
+from pathlib import Path
+import sys
+manifest = Path(sys.argv[1])
+text = manifest.read_text()
+permission = '    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />\n'
+text = text.replace('<application', permission + '    <application', 1)
+manifest.write_text(text)
+PY
+fi
+
 cd "$mobile_dir"
 flutter pub get
 
-echo 'Android platform generated. Run: cd apps/mobile && flutter run'
+echo 'Android platform generated with updater permission. Run: cd apps/mobile && flutter run'
