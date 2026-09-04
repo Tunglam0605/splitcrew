@@ -28,7 +28,7 @@ final class ReceiptCenterPage extends StatelessWidget {
               : ListView.separated(
                   padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
                   itemCount: expenses.length,
-                  separatorBuilder: (_, _) => const SizedBox(height: 8),
+                  separatorBuilder: (separatorContext, index) => const SizedBox(height: 8),
                   itemBuilder: (context, index) {
                     final expense = expenses[index];
                     return Card(
@@ -237,7 +237,11 @@ final class _ReceiptCard extends StatelessWidget {
             child: SizedBox(
               height: 220,
               child: exists
-                  ? Image.file(file, fit: BoxFit.cover, errorBuilder: (_, _, _) => const _MissingReceipt())
+                  ? Image.file(
+                      file,
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) => const _MissingReceipt(),
+                    )
                   : const _MissingReceipt(),
             ),
           ),
@@ -277,7 +281,7 @@ final class _ReceiptPreviewPage extends StatelessWidget {
             child: Image.file(
               file,
               fit: BoxFit.contain,
-              errorBuilder: (_, _, _) => const _MissingReceipt(),
+              errorBuilder: (context, error, stackTrace) => const _MissingReceipt(),
             ),
           ),
         ),
