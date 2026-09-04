@@ -45,6 +45,64 @@ final class StoredMember {
       );
 }
 
+final class StoredPaymentAccount {
+  const StoredPaymentAccount({
+    required this.id,
+    required this.memberId,
+    required this.provider,
+    required this.holderName,
+    required this.routingIdentifier,
+    required this.accountIdentifier,
+    this.createdAtMs = 0,
+    this.updatedAtMs = 0,
+    this.version = 0,
+  });
+
+  final String id;
+  final String memberId;
+  final PaymentAccountProvider provider;
+  final String holderName;
+  final String routingIdentifier;
+  final String accountIdentifier;
+  final int createdAtMs;
+  final int updatedAtMs;
+  final int version;
+
+  PaymentAccount toDomain() => PaymentAccount(
+        id: id,
+        memberId: memberId,
+        provider: provider,
+        holderName: holderName,
+        routingIdentifier: routingIdentifier,
+        accountIdentifier: accountIdentifier,
+        version: version,
+      );
+
+  Map<String, Object?> toJson() => {
+        'id': id,
+        'memberId': memberId,
+        'provider': provider.name,
+        'holderName': holderName,
+        'routingIdentifier': routingIdentifier,
+        'accountIdentifier': accountIdentifier,
+        'createdAtMs': createdAtMs,
+        'updatedAtMs': updatedAtMs,
+        'version': version,
+      };
+
+  factory StoredPaymentAccount.fromJson(Map<String, dynamic> json) => StoredPaymentAccount(
+        id: json['id'] as String,
+        memberId: json['memberId'] as String,
+        provider: PaymentAccountProvider.values.byName(json['provider'] as String? ?? 'vietQrBank'),
+        holderName: json['holderName'] as String,
+        routingIdentifier: json['routingIdentifier'] as String,
+        accountIdentifier: json['accountIdentifier'] as String,
+        createdAtMs: json['createdAtMs'] as int? ?? 0,
+        updatedAtMs: json['updatedAtMs'] as int? ?? 0,
+        version: json['version'] as int? ?? 0,
+      );
+}
+
 final class StoredExpense {
   StoredExpense({
     required this.id,
@@ -126,17 +184,20 @@ final class StoredTrip {
     required this.currencyCode,
     required List<StoredMember> members,
     required List<StoredExpense> expenses,
+    List<StoredPaymentAccount> paymentAccounts = const [],
     this.createdAtMs = 0,
     this.updatedAtMs = 0,
     this.version = 0,
   })  : members = List.unmodifiable(members),
-        expenses = List.unmodifiable(expenses);
+        expenses = List.unmodifiable(expenses),
+        paymentAccounts = List.unmodifiable(paymentAccounts);
 
   final String id;
   final String name;
   final String currencyCode;
   final List<StoredMember> members;
   final List<StoredExpense> expenses;
+  final List<StoredPaymentAccount> paymentAccounts;
   final int createdAtMs;
   final int updatedAtMs;
   final int version;
@@ -145,6 +206,7 @@ final class StoredTrip {
     String? name,
     List<StoredMember>? members,
     List<StoredExpense>? expenses,
+    List<StoredPaymentAccount>? paymentAccounts,
     int? updatedAtMs,
     int? version,
   }) {
@@ -154,6 +216,7 @@ final class StoredTrip {
       currencyCode: currencyCode,
       members: members ?? this.members,
       expenses: expenses ?? this.expenses,
+      paymentAccounts: paymentAccounts ?? this.paymentAccounts,
       createdAtMs: createdAtMs,
       updatedAtMs: updatedAtMs ?? this.updatedAtMs,
       version: version ?? this.version,
@@ -166,6 +229,7 @@ final class StoredTrip {
         'currencyCode': currencyCode,
         'members': members.map((member) => member.toJson()).toList(),
         'expenses': expenses.map((expense) => expense.toJson()).toList(),
+        'paymentAccounts': paymentAccounts.map((account) => account.toJson()).toList(),
         'createdAtMs': createdAtMs,
         'updatedAtMs': updatedAtMs,
         'version': version,
@@ -180,6 +244,9 @@ final class StoredTrip {
             .toList(),
         expenses: (json['expenses'] as List<dynamic>? ?? const [])
             .map((item) => StoredExpense.fromJson(Map<String, dynamic>.from(item as Map)))
+            .toList(),
+        paymentAccounts: (json['paymentAccounts'] as List<dynamic>? ?? const [])
+            .map((item) => StoredPaymentAccount.fromJson(Map<String, dynamic>.from(item as Map)))
             .toList(),
         createdAtMs: json['createdAtMs'] as int? ?? 0,
         updatedAtMs: json['updatedAtMs'] as int? ?? 0,
