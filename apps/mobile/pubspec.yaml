@@ -1,7 +1,7 @@
 name: splitcrew_mobile
-description: SplitCrew Android-first mobile MVP.
+description: SplitCrew Android-first local-first mobile MVP.
 publish_to: none
-version: 0.1.0+1
+version: 0.2.0-alpha.1+2
 
 environment:
   sdk: '>=3.4.0 <4.0.0'
@@ -12,7 +12,10 @@ flutter:
 dependencies:
   flutter:
     sdk: flutter
-  shared_preferences: ^2.3.2
+  path: ^1.9.1
+  shared_preferences: ^2.5.3
+  sqflite: ^2.4.2
+  uuid: ^4.5.1
   splitcrew_domain:
     path: ../../packages/domain
   splitcrew_split_engine:
