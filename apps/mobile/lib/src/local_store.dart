@@ -1,7 +1,7 @@
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
-import 'app_state.dart';
+import 'stored_models.dart';
 
 abstract interface class TripRepository {
   Future<StoredTrip?> loadCurrent();
