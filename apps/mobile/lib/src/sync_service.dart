@@ -11,6 +11,7 @@ import 'package:splitcrew_sync_protocol/splitcrew_sync_protocol.dart';
 import 'package:uuid/uuid.dart';
 
 import 'app_state.dart';
+import 'local_store.dart';
 
 enum MobileSyncMode { local, host, member }
 
@@ -19,14 +20,17 @@ final class MobileSyncController extends ChangeNotifier {
     required this.tripController,
     http.Client? client,
     Uuid? uuid,
+    TripRepository? snapshotRepository,
   })  : _client = client ?? http.Client(),
-        _uuid = uuid ?? const Uuid();
+        _uuid = uuid ?? const Uuid(),
+        _snapshotRepository = snapshotRepository ?? SqliteTripRepository();
 
   static const _prefsKey = 'splitcrew.member-session.v1';
 
   final TripController tripController;
   final http.Client _client;
   final Uuid _uuid;
+  final TripRepository _snapshotRepository;
 
   MobileSyncMode _mode = MobileSyncMode.local;
   LocalHostServer? _hostServer;
@@ -124,11 +128,13 @@ final class MobileSyncController extends ChangeNotifier {
       if (health['hostId'] != invite.hostId || health['tripId'] != invite.tripId) {
         throw StateError('The host identity does not match the invite.');
       }
-      final response = await _client.post(
-        invite.baseUri.resolve('/v1/join'),
-        headers: const {'content-type': 'application/json'},
-        body: jsonEncode({'invite': invite.encode()}),
-      ).timeout(const Duration(seconds: 8));
+      final response = await _client
+          .post(
+            invite.baseUri.resolve('/v1/join'),
+            headers: const {'content-type': 'application/json'},
+            body: jsonEncode({'invite': invite.encode()}),
+          )
+          .timeout(const Duration(seconds: 8));
       final body = _decodeBody(response.body);
       if (response.statusCode != 200) {
         throw StateError('Join rejected: ${body['error'] ?? response.statusCode}');
@@ -145,7 +151,7 @@ final class MobileSyncController extends ChangeNotifier {
       );
       if (snapshot.tripId != invite.tripId) throw const FormatException('Snapshot trip mismatch.');
 
-      await tripController.replaceFromSyncSnapshot(snapshot.snapshot);
+      await _replaceSnapshot(snapshot.snapshot);
       _memberBaseUri = invite.baseUri;
       _memberSessionToken = token;
       _memberId = memberId;
@@ -190,21 +196,24 @@ final class MobileSyncController extends ChangeNotifier {
     final token = _memberSessionToken;
     if (uri == null || token == null) return;
     try {
-      final response = await _client.get(
-        uri.resolve('/v1/snapshot'),
-        headers: {'authorization': 'Bearer $token'},
-      ).timeout(const Duration(seconds: 6));
+      final response = await _client
+          .get(
+            uri.resolve('/v1/snapshot'),
+            headers: {'authorization': 'Bearer $token'},
+          )
+          .timeout(const Duration(seconds: 6));
       if (response.statusCode == 401) {
         throw StateError('Host session expired. Ask the owner for a new invite.');
       }
       if (response.statusCode != 200) throw StateError('Snapshot request failed (${response.statusCode}).');
       final snapshot = TripSnapshotEnvelope.fromJson(_decodeBody(response.body));
       if (snapshot.tripId != tripController.trip?.id) throw StateError('Snapshot belongs to another trip.');
-      await tripController.replaceFromSyncSnapshot(snapshot.snapshot);
+      await _replaceSnapshot(snapshot.snapshot);
       _canonicalRevision = snapshot.revision;
       _memberOnline = true;
       _lastError = null;
       _lastSyncAt = DateTime.now();
+      await _persistMemberSession();
       notifyListeners();
     } catch (error) {
       _memberOnline = false;
@@ -246,30 +255,25 @@ final class MobileSyncController extends ChangeNotifier {
     required List<ExpensePayer> payers,
     required List<ExpenseAllocation> allocations,
   }) async {
-    if (_mode != MobileSyncMode.member) {
-      return tripController.updateExpense(
-        expenseId: expenseId,
-        title: title,
-        totalMinor: totalMinor,
-        payers: payers,
-        allocations: allocations,
+    if (_mode == MobileSyncMode.member) {
+      throw StateError(
+        'Synced expense editing is disabled in this validation slice. Create operations are enabled first for two-device testing.',
       );
     }
-    await _submitMemberOperation(
-      SyncOperationType.updateExpense,
-      {
-        'expenseId': expenseId,
-        'title': title,
-        'totalMinor': totalMinor,
-        'payers': {for (final payer in payers) payer.memberId: payer.amount.minorUnits},
-        'allocations': {for (final allocation in allocations) allocation.memberId: allocation.amount.minorUnits},
-      },
+    await tripController.updateExpense(
+      expenseId: expenseId,
+      title: title,
+      totalMinor: totalMinor,
+      payers: payers,
+      allocations: allocations,
     );
   }
 
   Future<void> deleteExpense(String expenseId) async {
-    if (_mode != MobileSyncMode.member) return tripController.removeExpense(expenseId);
-    await _submitMemberOperation(SyncOperationType.deleteExpense, {'expenseId': expenseId});
+    if (_mode == MobileSyncMode.member) {
+      throw StateError('Synced expense deletion is disabled in this validation slice.');
+    }
+    await tripController.removeExpense(expenseId);
   }
 
   Future<void> _submitMemberOperation(SyncOperationType type, Map<String, Object?> payload) async {
@@ -292,14 +296,16 @@ final class MobileSyncController extends ChangeNotifier {
 
     _setBusy(true);
     try {
-      final response = await _client.post(
-        baseUri.resolve('/v1/operations'),
-        headers: {
-          'authorization': 'Bearer $token',
-          'content-type': 'application/json',
-        },
-        body: jsonEncode(operation.toJson()),
-      ).timeout(const Duration(seconds: 8));
+      final response = await _client
+          .post(
+            baseUri.resolve('/v1/operations'),
+            headers: {
+              'authorization': 'Bearer $token',
+              'content-type': 'application/json',
+            },
+            body: jsonEncode(operation.toJson()),
+          )
+          .timeout(const Duration(seconds: 8));
       final body = _decodeBody(response.body);
       if (response.statusCode == 401) throw StateError('Host session expired. Ask for a new invite.');
       if (response.statusCode == 403) throw StateError('This member is not allowed to perform that operation.');
@@ -307,7 +313,9 @@ final class MobileSyncController extends ChangeNotifier {
       if (result.status == SyncResultStatus.conflict) {
         _canonicalRevision = result.canonicalTripRevision;
         await refreshMemberSnapshot();
-        throw SyncConflictException(result.message ?? 'The crew changed on the host. Review the refreshed data and retry.');
+        throw SyncConflictException(
+          result.message ?? 'The crew changed on the host. Review the refreshed data and retry.',
+        );
       }
       if (result.status == SyncResultStatus.rejected) {
         throw StateError(result.message ?? result.errorCode ?? 'Host rejected the operation.');
@@ -316,7 +324,7 @@ final class MobileSyncController extends ChangeNotifier {
       await refreshMemberSnapshot();
     } on TimeoutException {
       _memberOnline = false;
-      _lastError = 'Host did not respond. Keep the app open and retry when both phones are on the same network.';
+      _lastError = 'Host did not respond. Keep both phones on the same network and retry.';
       notifyListeners();
       rethrow;
     } on SocketException catch (error) {
@@ -343,10 +351,9 @@ final class MobileSyncController extends ChangeNotifier {
     if (baseUri == null || token == null) return;
     try {
       final uri = baseUri.resolve('/v1/events?afterRevision=$_canonicalRevision');
-      final response = await _client.get(
-        uri,
-        headers: {'authorization': 'Bearer $token'},
-      ).timeout(const Duration(seconds: 5));
+      final response = await _client
+          .get(uri, headers: {'authorization': 'Bearer $token'})
+          .timeout(const Duration(seconds: 5));
       if (response.statusCode == 401) throw StateError('Host session expired.');
       if (response.statusCode != 200) throw StateError('Event polling failed (${response.statusCode}).');
       final body = _decodeBody(response.body);
@@ -388,17 +395,29 @@ final class MobileSyncController extends ChangeNotifier {
   }
 
   Future<void> _persistMemberSession() async {
+    final baseUri = _memberBaseUri;
+    final token = _memberSessionToken;
+    final memberId = _memberId;
+    final hostId = _pinnedHostId;
+    if (baseUri == null || token == null || memberId == null || hostId == null) return;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(
       _prefsKey,
       jsonEncode({
-        'baseUri': _memberBaseUri.toString(),
-        'sessionToken': _memberSessionToken,
-        'memberId': _memberId,
-        'hostId': _pinnedHostId,
+        'baseUri': baseUri.toString(),
+        'sessionToken': token,
+        'memberId': memberId,
+        'hostId': hostId,
         'revision': _canonicalRevision,
       }),
     );
+  }
+
+  Future<void> _replaceSnapshot(Map<String, Object?> snapshot) async {
+    final stored = StoredTrip.fromJson(Map<String, dynamic>.from(snapshot));
+    await _snapshotRepository.deleteCurrent();
+    await _snapshotRepository.save(stored);
+    await tripController.load();
   }
 
   Future<String> _discoverLanIpv4() async {
@@ -420,10 +439,10 @@ final class MobileSyncController extends ChangeNotifier {
   }
 
   bool _isPrivateIpv4(String value) {
-    final parts = value.split('.').map(int.tryParse).toList();
-    if (parts.length != 4 || parts.any((part) => part == null)) return false;
-    final a = parts[0]!;
-    final b = parts[1]!;
+    final parsed = value.split('.').map(int.tryParse).toList();
+    if (parsed.length != 4 || parsed.any((part) => part == null)) return false;
+    final a = parsed[0]!;
+    final b = parsed[1]!;
     return a == 10 || (a == 172 && b >= 16 && b <= 31) || (a == 192 && b == 168);
   }
 
@@ -447,7 +466,7 @@ final class MobileSyncController extends ChangeNotifier {
   @override
   void dispose() {
     _pollTimer?.cancel();
-    unawaited(_hostServer?.stop() ?? Future.value());
+    unawaited(_hostServer?.stop() ?? Future<void>.value());
     _client.close();
     super.dispose();
   }
@@ -480,15 +499,9 @@ final class _MobileTripHostBackend implements HostTripBackend {
     final member = controller.trip?.members.where((item) => item.id == memberId).firstOrNull;
     if (member == null) return false;
     if (member.isOwner) return true;
-    return switch (type) {
-      SyncOperationType.createExpense ||
-      SyncOperationType.updateExpense ||
-      SyncOperationType.deleteExpense ||
-      SyncOperationType.renameMember ||
-      SyncOperationType.updatePaymentAccount ||
-      SyncOperationType.markSettlement => true,
-      SyncOperationType.addMember => false,
-    };
+    return type == SyncOperationType.createExpense ||
+        type == SyncOperationType.renameMember ||
+        type == SyncOperationType.updatePaymentAccount;
   }
 
   @override
@@ -594,46 +607,35 @@ final class _MobileTripHostBackend implements HostTripBackend {
           totalMinor: payload['totalMinor'] as int,
           payers: _payers(payload['payers'], trip.currencyCode),
           allocations: _allocations(payload['allocations'], trip.currencyCode),
-          createdByMemberId: actor.id,
         );
       case SyncOperationType.updateExpense:
-        final expenseId = payload['expenseId'] as String;
-        final expense = controller.expenseById(expenseId);
-        if (expense == null) throw ArgumentError('Expense not found.');
-        if (!isOwner && expense.createdByMemberId != actor.id) {
-          throw const _ForbiddenOperation('Members may only edit expenses they created.');
-        }
+        if (!isOwner) throw const _ForbiddenOperation('Synced editing by members is not enabled yet.');
         await controller.updateExpense(
-          expenseId: expenseId,
+          expenseId: payload['expenseId'] as String,
           title: payload['title'] as String,
           totalMinor: payload['totalMinor'] as int,
           payers: _payers(payload['payers'], trip.currencyCode),
           allocations: _allocations(payload['allocations'], trip.currencyCode),
         );
       case SyncOperationType.deleteExpense:
-        final expenseId = payload['expenseId'] as String;
-        final expense = controller.expenseById(expenseId);
-        if (expense == null) return;
-        if (!isOwner && expense.createdByMemberId != actor.id) {
-          throw const _ForbiddenOperation('Members may only delete expenses they created.');
-        }
-        await controller.removeExpense(expenseId);
+        if (!isOwner) throw const _ForbiddenOperation('Synced deletion by members is not enabled yet.');
+        await controller.removeExpense(payload['expenseId'] as String);
       case SyncOperationType.addMember:
         if (!isOwner) throw const _ForbiddenOperation('Only the owner can add members.');
         await controller.addMember(payload['name'] as String);
       case SyncOperationType.renameMember:
-        final memberId = payload['memberId'] as String;
-        if (!isOwner && memberId != actor.id) {
+        final targetId = payload['memberId'] as String;
+        if (!isOwner && targetId != actor.id) {
           throw const _ForbiddenOperation('Members may only rename their own profile.');
         }
-        await controller.renameMember(memberId, payload['name'] as String);
+        await controller.renameMember(targetId, payload['name'] as String);
       case SyncOperationType.updatePaymentAccount:
-        final memberId = payload['memberId'] as String;
-        if (!isOwner && memberId != actor.id) {
+        final targetId = payload['memberId'] as String;
+        if (!isOwner && targetId != actor.id) {
           throw const _ForbiddenOperation('Members may only update their own payment profile.');
         }
         await controller.upsertPaymentAccount(
-          memberId: memberId,
+          memberId: targetId,
           holderName: payload['holderName'] as String,
           bankBin: payload['bankBin'] as String,
           accountIdentifier: payload['accountIdentifier'] as String,
@@ -653,7 +655,7 @@ final class _MobileTripHostBackend implements HostTripBackend {
     final json = trip.toJson();
     final expenses = (json['expenses'] as List<Object?>).map((raw) {
       final expense = Map<String, Object?>.from(raw as Map);
-      // Receipt files stay on the device that captured them until media sync is added.
+      // Receipt files remain host-local until media synchronization is implemented.
       expense['receipts'] = <Object?>[];
       return expense;
     }).toList();
