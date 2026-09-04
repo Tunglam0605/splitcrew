@@ -58,6 +58,18 @@ jobs:
       - run: dart analyze --fatal-infos
       - run: dart test
 
+  sync-protocol:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/sync_protocol
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+      - run: dart pub get
+      - run: dart analyze --fatal-infos
+      - run: dart test
+
   android-mvp:
     runs-on: ubuntu-latest
     steps:
