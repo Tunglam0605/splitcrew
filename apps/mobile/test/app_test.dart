@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:splitcrew_domain/splitcrew_domain.dart';
@@ -24,6 +26,28 @@ void main() {
     expect(second.trip!.name, 'Da Nang');
     expect(second.trip!.members.single.isOwner, isTrue);
     expect(second.trip!.id, isNotEmpty);
+  });
+
+  test('imports a valid v0.1 SharedPreferences trip once', () async {
+    SharedPreferences.setMockInitialValues({
+      'splitcrew.trip.v1': jsonEncode({
+        'id': 'legacy-trip',
+        'name': 'Legacy trip',
+        'currencyCode': 'VND',
+        'members': [
+          {'id': 'legacy-owner', 'name': 'Lam', 'isOwner': true},
+        ],
+        'expenses': <Object?>[],
+      }),
+    });
+    final repository = MemoryTripRepository();
+    final value = TripController(repository: repository);
+    await value.load();
+    expect(value.trip!.name, 'Legacy trip');
+    expect(value.trip!.createdAtMs, greaterThan(0));
+    expect((await repository.loadCurrent())!.id, 'legacy-trip');
+    final preferences = await SharedPreferences.getInstance();
+    expect(preferences.getString('splitcrew.trip.v1'), isNull);
   });
 
   test('adds expense and calculates settlement', () async {
@@ -59,6 +83,16 @@ void main() {
     expect(value.trip!.version, greaterThan(initialTripVersion));
   });
 
+  test('removes an unreferenced non-owner member', () async {
+    final value = controller();
+    await value.load();
+    await value.createTrip(name: 'Trip', ownerName: 'Lam');
+    await value.addMember('Hoang');
+    final memberId = value.trip!.members.last.id;
+    await value.removeMember(memberId);
+    expect(value.trip!.members, hasLength(1));
+  });
+
   test('rejects removing a member referenced by an expense', () async {
     final value = controller();
     await value.load();
@@ -72,7 +106,7 @@ void main() {
       payers: [ExpensePayer(memberId: members.first.id, amount: total)],
       allocations: SplitEngine.equal(total: total, memberIds: members.map((m) => m.id)),
     );
-    expect(() => value.removeMember(members.last.id), throwsArgumentError);
+    expect(value.removeMember(members.last.id), throwsArgumentError);
   });
 
   test('updates an expense and recalculates balances', () async {
