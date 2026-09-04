@@ -18,6 +18,35 @@ void main() {
     });
   });
 
+  group('PaymentAccount', () {
+    test('stores transfer routing data without banking credentials', () {
+      final account = PaymentAccount(
+        id: 'payment-1',
+        memberId: 'lam',
+        provider: PaymentAccountProvider.vietQrBank,
+        holderName: 'NGUYEN VAN A',
+        routingIdentifier: '970422',
+        accountIdentifier: '5566778899',
+      );
+      expect(account.routingIdentifier, '970422');
+      expect(account.accountIdentifier, '5566778899');
+    });
+
+    test('rejects incomplete transfer routing data', () {
+      expect(
+        () => PaymentAccount(
+          id: 'payment-1',
+          memberId: 'lam',
+          provider: PaymentAccountProvider.vietQrBank,
+          holderName: '',
+          routingIdentifier: '970422',
+          accountIdentifier: '5566778899',
+        ),
+        throwsArgumentError,
+      );
+    });
+  });
+
   group('Expense', () {
     test('accepts multiple payers when money is conserved', () {
       final expense = Expense(
