@@ -3,19 +3,24 @@ import 'package:splitcrew_update_core/splitcrew_update_core.dart';
 
 import 'app_state.dart';
 import 'home_page.dart';
+import 'member_sync_workspace.dart';
 import 'payment_ui.dart';
 import 'receipt_ui.dart';
 import 'settings_page.dart';
+import 'sync_service.dart';
+import 'sync_ui.dart';
 import 'update_service.dart';
 
 final class SplitCrewApp extends StatelessWidget {
   const SplitCrewApp({
     super.key,
     required this.controller,
+    required this.sync,
     required this.updates,
   });
 
   final TripController controller;
+  final MobileSyncController sync;
   final UpdateController updates;
 
   @override
@@ -29,15 +34,39 @@ final class SplitCrewApp extends StatelessWidget {
         inputDecorationTheme: const InputDecorationTheme(border: OutlineInputBorder()),
       ),
       home: AnimatedBuilder(
-        animation: controller,
+        animation: Listenable.merge([controller, sync]),
         builder: (context, _) {
+          final isMember = sync.isMemberSession;
           final page = controller.hasTrip
-              ? TripWorkspace(controller: controller)
+              ? isMember
+                  ? MemberSyncedWorkspace(controller: controller, sync: sync)
+                  : TripWorkspace(controller: controller)
               : CreateTripPage(controller: controller, loadError: controller.loadError);
+
           return Stack(
             children: [
               Positioned.fill(child: page),
-              if (controller.hasTrip)
+              if (!controller.hasTrip)
+                Positioned(
+                  right: 16,
+                  bottom: 16,
+                  child: SafeArea(
+                    child: FloatingActionButton.extended(
+                      heroTag: 'join-crew',
+                      tooltip: 'Join a crew on the local network',
+                      onPressed: sync.busy
+                          ? null
+                          : () => Navigator.of(context).push(
+                                MaterialPageRoute<void>(
+                                  builder: (_) => JoinCrewPage(sync: sync),
+                                ),
+                              ),
+                      icon: const Icon(Icons.group_add_rounded),
+                      label: const Text('Join crew'),
+                    ),
+                  ),
+                ),
+              if (controller.hasTrip && !isMember)
                 Positioned(
                   left: 16,
                   bottom: 72,
@@ -54,9 +83,37 @@ final class SplitCrewApp extends StatelessWidget {
                     ),
                   ),
                 ),
+              if (controller.hasTrip && !isMember)
+                Positioned(
+                  left: 16,
+                  bottom: 128,
+                  child: SafeArea(
+                    child: AnimatedBuilder(
+                      animation: sync,
+                      builder: (context, _) {
+                        return FloatingActionButton.small(
+                          heroTag: 'crew-sync',
+                          tooltip: sync.isHostRunning ? 'Host Session running' : 'Crew sync',
+                          onPressed: () => Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => SyncCenterPage(controller: controller, sync: sync),
+                            ),
+                          ),
+                          child: Icon(
+                            sync.isHostRunning ? Icons.wifi_tethering_rounded : Icons.sync_alt_rounded,
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
               Positioned(
                 left: 16,
-                bottom: controller.hasTrip ? 128 : 16,
+                bottom: controller.hasTrip
+                    ? isMember
+                        ? 16
+                        : 184
+                    : 16,
                 child: SafeArea(
                   child: AnimatedBuilder(
                     animation: updates,

@@ -104,16 +104,23 @@ jobs:
           rm -rf apps/mobile/android
           cp -R "$tmp/mobile/android" apps/mobile/android
           cp "$tmp/mobile/.metadata" apps/mobile/.metadata
-      - name: Allow user-authorized APK updates
+      - name: Configure Android LAN sync and updater permissions
         shell: bash
         run: |
           python - <<'PY'
           from pathlib import Path
           manifest = Path('apps/mobile/android/app/src/main/AndroidManifest.xml')
           text = manifest.read_text()
-          permission = '    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />\n'
-          if 'android.permission.REQUEST_INSTALL_PACKAGES' not in text:
-              text = text.replace('<application', permission + '    <application', 1)
+          permissions = [
+              '    <uses-permission android:name="android.permission.INTERNET" />\n',
+              '    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />\n',
+          ]
+          for permission in permissions:
+              name = permission.split('android:name="', 1)[1].split('"', 1)[0]
+              if name not in text:
+                  text = text.replace('<application', permission + '    <application', 1)
+          if 'android:usesCleartextTraffic=' not in text:
+              text = text.replace('<application', '<application\n        android:usesCleartextTraffic="true"', 1)
           manifest.write_text(text)
           PY
       - name: Install Flutter dependencies
