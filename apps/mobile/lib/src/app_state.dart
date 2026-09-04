@@ -7,6 +7,7 @@ import 'package:splitcrew_settlement_engine/splitcrew_settlement_engine.dart';
 import 'package:uuid/uuid.dart';
 
 import 'local_store.dart';
+import 'receipt_store.dart';
 import 'stored_models.dart';
 
 export 'stored_models.dart';
@@ -14,11 +15,16 @@ export 'stored_models.dart';
 final class TripController extends ChangeNotifier {
   static const _legacyStorageKey = 'splitcrew.trip.v1';
 
-  TripController({TripRepository? repository, Uuid? uuid})
-      : _repository = repository ?? SqliteTripRepository(),
+  TripController({
+    TripRepository? repository,
+    ReceiptFileStore? receiptFileStore,
+    Uuid? uuid,
+  })  : _repository = repository ?? SqliteTripRepository(),
+        _receiptFileStore = receiptFileStore ?? LocalReceiptFileStore(),
         _uuid = uuid ?? const Uuid();
 
   final TripRepository _repository;
+  final ReceiptFileStore _receiptFileStore;
   final Uuid _uuid;
   StoredTrip? _trip;
   String? _loadError;
@@ -236,6 +242,7 @@ final class TripController extends ChangeNotifier {
       totalMinor: totalMinor,
       payers: payers,
       allocations: allocations,
+      receipts: old.receipts,
       createdAtMs: old.createdAtMs,
       updatedAtMs: _nowMs(),
       version: old.version + 1,
@@ -247,22 +254,91 @@ final class TripController extends ChangeNotifier {
     await _persistAndNotify();
   }
 
+  Future<void> addReceiptFromPath({
+    required String expenseId,
+    required String sourcePath,
+    required String originalName,
+    required String mimeType,
+  }) async {
+    final current = _requireTrip();
+    final old = current.expenses.where((expense) => expense.id == expenseId).firstOrNull;
+    if (old == null) throw ArgumentError('Expense not found.');
+    if (old.receipts.length >= 8) {
+      throw ArgumentError('A maximum of 8 receipt images can be attached to one expense.');
+    }
+    final now = _nowMs();
+    final receipt = await _receiptFileStore.importFile(
+      receiptId: _uuid.v4(),
+      expenseId: expenseId,
+      sourcePath: sourcePath,
+      originalName: originalName,
+      mimeType: mimeType,
+      createdAtMs: now,
+    );
+    final updated = old.copyWith(
+      receipts: [...old.receipts, receipt],
+      updatedAtMs: now,
+      version: old.version + 1,
+    );
+    _trip = _touchTrip(
+      current,
+      expenses: [for (final expense in current.expenses) if (expense.id == expenseId) updated else expense],
+    );
+    try {
+      await _persistAndNotify();
+    } catch (_) {
+      await _receiptFileStore.deleteFile(receipt);
+      rethrow;
+    }
+  }
+
+  Future<void> removeReceipt({required String expenseId, required String receiptId}) async {
+    final current = _requireTrip();
+    final old = current.expenses.where((expense) => expense.id == expenseId).firstOrNull;
+    if (old == null) throw ArgumentError('Expense not found.');
+    final receipt = old.receipts.where((item) => item.id == receiptId).firstOrNull;
+    if (receipt == null) return;
+    final now = _nowMs();
+    final updated = old.copyWith(
+      receipts: old.receipts.where((item) => item.id != receiptId).toList(),
+      updatedAtMs: now,
+      version: old.version + 1,
+    );
+    _trip = _touchTrip(
+      current,
+      expenses: [for (final expense in current.expenses) if (expense.id == expenseId) updated else expense],
+    );
+    await _persistAndNotify();
+    await _receiptFileStore.deleteFile(receipt);
+  }
+
   Future<void> removeExpense(String expenseId) async {
     final current = _requireTrip();
-    if (!current.expenses.any((expense) => expense.id == expenseId)) return;
+    final removed = current.expenses.where((expense) => expense.id == expenseId).firstOrNull;
+    if (removed == null) return;
     _trip = _touchTrip(
       current,
       expenses: current.expenses.where((expense) => expense.id != expenseId).toList(),
     );
     await _persistAndNotify();
+    for (final receipt in removed.receipts) {
+      await _receiptFileStore.deleteFile(receipt);
+    }
   }
 
   Future<void> reset() async {
+    final receipts = [
+      for (final expense in _trip?.expenses ?? const <StoredExpense>[])
+        ...expense.receipts,
+    ];
     _trip = null;
     _loadError = null;
     await _repository.deleteCurrent();
     final preferences = await SharedPreferences.getInstance();
     await preferences.remove(_legacyStorageKey);
+    for (final receipt in receipts) {
+      await _receiptFileStore.deleteFile(receipt);
+    }
     notifyListeners();
   }
 
@@ -310,6 +386,7 @@ final class TripController extends ChangeNotifier {
     required int totalMinor,
     required List<ExpensePayer> payers,
     required List<ExpenseAllocation> allocations,
+    List<StoredReceiptAsset> receipts = const [],
     required int createdAtMs,
     required int updatedAtMs,
     required int version,
@@ -346,6 +423,7 @@ final class TripController extends ChangeNotifier {
         for (final allocation in expense.allocations) allocation.memberId: allocation.amount.minorUnits,
       },
       createdByMemberId: expense.createdByMemberId,
+      receipts: receipts,
       createdAtMs: createdAtMs,
       updatedAtMs: updatedAtMs,
       version: version,
@@ -402,10 +480,17 @@ final class TripController extends ChangeNotifier {
         throw const FormatException('A member may only have one active payment account in this MVP.');
       }
     }
+    final receiptIds = <String>{};
     for (final expense in trip.expenses) {
       expense.toDomain(tripId: trip.id, currencyCode: trip.currencyCode);
       if (!ids.containsAll(expense.payerMinorByMember.keys) || !ids.containsAll(expense.allocationMinorByMember.keys)) {
         throw const FormatException('Expense references an unknown member.');
+      }
+      for (final receipt in expense.receipts) {
+        if (receipt.expenseId != expense.id || receipt.localPath.trim().isEmpty || receipt.sha256.length != 64) {
+          throw const FormatException('Invalid receipt metadata.');
+        }
+        if (!receiptIds.add(receipt.id)) throw const FormatException('Duplicate receipt identifier.');
       }
     }
   }
@@ -454,6 +539,7 @@ final class TripController extends ChangeNotifier {
             payerMinorByMember: expense.payerMinorByMember,
             allocationMinorByMember: expense.allocationMinorByMember,
             createdByMemberId: expense.createdByMemberId,
+            receipts: expense.receipts,
             createdAtMs: expense.createdAtMs == 0 ? now : expense.createdAtMs,
             updatedAtMs: expense.updatedAtMs == 0 ? now : expense.updatedAtMs,
             version: expense.version,

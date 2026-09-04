@@ -28,7 +28,7 @@ final class MemoryTripRepository implements TripRepository {
 }
 
 final class SqliteTripRepository implements TripRepository {
-  static const schemaVersion = 2;
+  static const schemaVersion = 3;
 
   Database? _database;
 
@@ -43,10 +43,14 @@ final class SqliteTripRepository implements TripRepository {
       onCreate: (db, version) async {
         await _createCoreTables(db);
         await _createPaymentAccountsTable(db);
+        await _createReceiptAssetsTable(db);
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
           await _createPaymentAccountsTable(db);
+        }
+        if (oldVersion < 3) {
+          await _createReceiptAssetsTable(db);
         }
       },
     );
@@ -132,6 +136,24 @@ CREATE TABLE IF NOT EXISTS payment_accounts (
     await db.execute('CREATE INDEX IF NOT EXISTS idx_payment_accounts_member ON payment_accounts(member_id)');
   }
 
+  Future<void> _createReceiptAssetsTable(Database db) async {
+    await db.execute('''
+CREATE TABLE IF NOT EXISTS receipt_assets (
+  id TEXT PRIMARY KEY,
+  expense_id TEXT NOT NULL,
+  local_path TEXT NOT NULL,
+  sha256 TEXT NOT NULL,
+  original_name TEXT NOT NULL,
+  mime_type TEXT NOT NULL,
+  size_bytes INTEGER NOT NULL,
+  created_at_ms INTEGER NOT NULL,
+  version INTEGER NOT NULL,
+  FOREIGN KEY(expense_id) REFERENCES expenses(id) ON DELETE CASCADE
+)
+''');
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_receipt_assets_expense ON receipt_assets(expense_id)');
+  }
+
   @override
   Future<StoredTrip?> loadCurrent() async {
     final db = await _open();
@@ -194,6 +216,12 @@ ORDER BY p.created_at_ms ASC
       final expenseId = expense['id'] as String;
       final payerRows = await db.query('expense_payers', where: 'expense_id = ?', whereArgs: [expenseId]);
       final allocationRows = await db.query('expense_allocations', where: 'expense_id = ?', whereArgs: [expenseId]);
+      final receiptRows = await db.query(
+        'receipt_assets',
+        where: 'expense_id = ?',
+        whereArgs: [expenseId],
+        orderBy: 'created_at_ms ASC',
+      );
       expenses.add(
         StoredExpense(
           id: expenseId,
@@ -207,6 +235,20 @@ ORDER BY p.created_at_ms ASC
               allocation['member_id'] as String: allocation['amount_minor'] as int,
           },
           createdByMemberId: expense['created_by_member_id'] as String,
+          receipts: [
+            for (final receipt in receiptRows)
+              StoredReceiptAsset(
+                id: receipt['id'] as String,
+                expenseId: receipt['expense_id'] as String,
+                localPath: receipt['local_path'] as String,
+                sha256: receipt['sha256'] as String,
+                originalName: receipt['original_name'] as String,
+                mimeType: receipt['mime_type'] as String,
+                sizeBytes: receipt['size_bytes'] as int,
+                createdAtMs: receipt['created_at_ms'] as int,
+                version: receipt['version'] as int,
+              ),
+          ],
           createdAtMs: expense['created_at_ms'] as int,
           updatedAtMs: expense['updated_at_ms'] as int,
           version: expense['version'] as int,
@@ -292,6 +334,19 @@ ORDER BY p.created_at_ms ASC
             'expense_id': expense.id,
             'member_id': allocation.key,
             'amount_minor': allocation.value,
+          });
+        }
+        for (final receipt in expense.receipts) {
+          await txn.insert('receipt_assets', {
+            'id': receipt.id,
+            'expense_id': expense.id,
+            'local_path': receipt.localPath,
+            'sha256': receipt.sha256,
+            'original_name': receipt.originalName,
+            'mime_type': receipt.mimeType,
+            'size_bytes': receipt.sizeBytes,
+            'created_at_ms': receipt.createdAtMs,
+            'version': receipt.version,
           });
         }
       }
