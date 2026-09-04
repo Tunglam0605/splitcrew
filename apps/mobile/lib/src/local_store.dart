@@ -1,5 +1,6 @@
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
+import 'package:splitcrew_domain/splitcrew_domain.dart';
 
 import 'stored_models.dart';
 
@@ -27,6 +28,8 @@ final class MemoryTripRepository implements TripRepository {
 }
 
 final class SqliteTripRepository implements TripRepository {
+  static const schemaVersion = 2;
+
   Database? _database;
 
   Future<Database> _open() async {
@@ -35,10 +38,24 @@ final class SqliteTripRepository implements TripRepository {
     final root = await getDatabasesPath();
     final database = await openDatabase(
       p.join(root, 'splitcrew.db'),
-      version: 1,
+      version: schemaVersion,
       onConfigure: (db) async => db.execute('PRAGMA foreign_keys = ON'),
       onCreate: (db, version) async {
-        await db.execute('''
+        await _createCoreTables(db);
+        await _createPaymentAccountsTable(db);
+      },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          await _createPaymentAccountsTable(db);
+        }
+      },
+    );
+    _database = database;
+    return database;
+  }
+
+  Future<void> _createCoreTables(Database db) async {
+    await db.execute('''
 CREATE TABLE trips (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -48,7 +65,7 @@ CREATE TABLE trips (
   version INTEGER NOT NULL
 )
 ''');
-        await db.execute('''
+    await db.execute('''
 CREATE TABLE members (
   id TEXT PRIMARY KEY,
   trip_id TEXT NOT NULL,
@@ -60,7 +77,7 @@ CREATE TABLE members (
   FOREIGN KEY(trip_id) REFERENCES trips(id) ON DELETE CASCADE
 )
 ''');
-        await db.execute('''
+    await db.execute('''
 CREATE TABLE expenses (
   id TEXT PRIMARY KEY,
   trip_id TEXT NOT NULL,
@@ -73,7 +90,7 @@ CREATE TABLE expenses (
   FOREIGN KEY(trip_id) REFERENCES trips(id) ON DELETE CASCADE
 )
 ''');
-        await db.execute('''
+    await db.execute('''
 CREATE TABLE expense_payers (
   expense_id TEXT NOT NULL,
   member_id TEXT NOT NULL,
@@ -83,7 +100,7 @@ CREATE TABLE expense_payers (
   FOREIGN KEY(member_id) REFERENCES members(id)
 )
 ''');
-        await db.execute('''
+    await db.execute('''
 CREATE TABLE expense_allocations (
   expense_id TEXT NOT NULL,
   member_id TEXT NOT NULL,
@@ -93,12 +110,26 @@ CREATE TABLE expense_allocations (
   FOREIGN KEY(member_id) REFERENCES members(id)
 )
 ''');
-        await db.execute('CREATE INDEX idx_members_trip ON members(trip_id)');
-        await db.execute('CREATE INDEX idx_expenses_trip ON expenses(trip_id)');
-      },
-    );
-    _database = database;
-    return database;
+    await db.execute('CREATE INDEX idx_members_trip ON members(trip_id)');
+    await db.execute('CREATE INDEX idx_expenses_trip ON expenses(trip_id)');
+  }
+
+  Future<void> _createPaymentAccountsTable(Database db) async {
+    await db.execute('''
+CREATE TABLE IF NOT EXISTS payment_accounts (
+  id TEXT PRIMARY KEY,
+  member_id TEXT NOT NULL UNIQUE,
+  provider TEXT NOT NULL,
+  holder_name TEXT NOT NULL,
+  routing_identifier TEXT NOT NULL,
+  account_identifier TEXT NOT NULL,
+  created_at_ms INTEGER NOT NULL,
+  updated_at_ms INTEGER NOT NULL,
+  version INTEGER NOT NULL,
+  FOREIGN KEY(member_id) REFERENCES members(id) ON DELETE CASCADE
+)
+''');
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_payment_accounts_member ON payment_accounts(member_id)');
   }
 
   @override
@@ -108,8 +139,28 @@ CREATE TABLE expense_allocations (
     if (tripRows.isEmpty) return null;
     final row = tripRows.single;
     final tripId = row['id'] as String;
-    final memberRows = await db.query('members', where: 'trip_id = ?', whereArgs: [tripId], orderBy: 'created_at_ms ASC');
-    final expenseRows = await db.query('expenses', where: 'trip_id = ?', whereArgs: [tripId], orderBy: 'created_at_ms ASC');
+    final memberRows = await db.query(
+      'members',
+      where: 'trip_id = ?',
+      whereArgs: [tripId],
+      orderBy: 'created_at_ms ASC',
+    );
+    final expenseRows = await db.query(
+      'expenses',
+      where: 'trip_id = ?',
+      whereArgs: [tripId],
+      orderBy: 'created_at_ms ASC',
+    );
+    final paymentRows = await db.rawQuery(
+      '''
+SELECT p.*
+FROM payment_accounts p
+INNER JOIN members m ON m.id = p.member_id
+WHERE m.trip_id = ?
+ORDER BY p.created_at_ms ASC
+''',
+      [tripId],
+    );
 
     final members = [
       for (final member in memberRows)
@@ -120,6 +171,21 @@ CREATE TABLE expense_allocations (
           createdAtMs: member['created_at_ms'] as int,
           updatedAtMs: member['updated_at_ms'] as int,
           version: member['version'] as int,
+        ),
+    ];
+
+    final paymentAccounts = [
+      for (final payment in paymentRows)
+        StoredPaymentAccount(
+          id: payment['id'] as String,
+          memberId: payment['member_id'] as String,
+          provider: PaymentAccountProvider.values.byName(payment['provider'] as String),
+          holderName: payment['holder_name'] as String,
+          routingIdentifier: payment['routing_identifier'] as String,
+          accountIdentifier: payment['account_identifier'] as String,
+          createdAtMs: payment['created_at_ms'] as int,
+          updatedAtMs: payment['updated_at_ms'] as int,
+          version: payment['version'] as int,
         ),
     ];
 
@@ -154,6 +220,7 @@ CREATE TABLE expense_allocations (
       currencyCode: row['currency_code'] as String,
       members: members,
       expenses: expenses,
+      paymentAccounts: paymentAccounts,
       createdAtMs: row['created_at_ms'] as int,
       updatedAtMs: row['updated_at_ms'] as int,
       version: row['version'] as int,
@@ -187,6 +254,19 @@ CREATE TABLE expense_allocations (
           'created_at_ms': member.createdAtMs,
           'updated_at_ms': member.updatedAtMs,
           'version': member.version,
+        });
+      }
+      for (final payment in trip.paymentAccounts) {
+        await txn.insert('payment_accounts', {
+          'id': payment.id,
+          'member_id': payment.memberId,
+          'provider': payment.provider.name,
+          'holder_name': payment.holderName,
+          'routing_identifier': payment.routingIdentifier,
+          'account_identifier': payment.accountIdentifier,
+          'created_at_ms': payment.createdAtMs,
+          'updated_at_ms': payment.updatedAtMs,
+          'version': payment.version,
         });
       }
       for (final expense in trip.expenses) {
