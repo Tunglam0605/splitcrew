@@ -63,6 +63,7 @@ final class TripController extends ChangeNotifier {
         ),
       ],
       expenses: const [],
+      paymentAccounts: const [],
       createdAtMs: now,
       updatedAtMs: now,
     );
@@ -127,8 +128,72 @@ final class TripController extends ChangeNotifier {
     _trip = _touchTrip(
       current,
       members: current.members.where((item) => item.id != memberId).toList(),
+      paymentAccounts: current.paymentAccounts.where((account) => account.memberId != memberId).toList(),
     );
     await _persistAndNotify();
+  }
+
+  Future<void> upsertPaymentAccount({
+    required String memberId,
+    required String holderName,
+    required String bankBin,
+    required String accountIdentifier,
+  }) async {
+    final current = _requireTrip();
+    if (!current.members.any((member) => member.id == memberId)) {
+      throw ArgumentError('Member not found.');
+    }
+    final existing = current.paymentAccounts.where((account) => account.memberId == memberId).firstOrNull;
+    final cleanHolder = holderName.trim();
+    final cleanBin = bankBin.trim();
+    final cleanAccount = accountIdentifier.replaceAll(RegExp(r'\s+'), '');
+    final now = _nowMs();
+    final domain = PaymentAccount(
+      id: existing?.id ?? _uuid.v4(),
+      memberId: memberId,
+      provider: PaymentAccountProvider.vietQrBank,
+      holderName: cleanHolder,
+      routingIdentifier: cleanBin,
+      accountIdentifier: cleanAccount,
+      version: existing == null ? 0 : existing.version + 1,
+    );
+    final stored = StoredPaymentAccount(
+      id: domain.id,
+      memberId: domain.memberId,
+      provider: domain.provider,
+      holderName: domain.holderName,
+      routingIdentifier: domain.routingIdentifier,
+      accountIdentifier: domain.accountIdentifier,
+      createdAtMs: existing?.createdAtMs ?? now,
+      updatedAtMs: now,
+      version: domain.version,
+    );
+    _trip = _touchTrip(
+      current,
+      paymentAccounts: [
+        for (final account in current.paymentAccounts)
+          if (account.memberId != memberId) account,
+        stored,
+      ],
+    );
+    await _persistAndNotify();
+  }
+
+  Future<void> removePaymentAccount(String memberId) async {
+    final current = _requireTrip();
+    if (!current.paymentAccounts.any((account) => account.memberId == memberId)) return;
+    _trip = _touchTrip(
+      current,
+      paymentAccounts: current.paymentAccounts.where((account) => account.memberId != memberId).toList(),
+    );
+    await _persistAndNotify();
+  }
+
+  PaymentAccount? paymentAccountForMember(String memberId) {
+    final current = _trip;
+    if (current == null) return null;
+    final stored = current.paymentAccounts.where((account) => account.memberId == memberId).firstOrNull;
+    return stored?.toDomain();
   }
 
   Future<void> addExpense({
@@ -292,11 +357,13 @@ final class TripController extends ChangeNotifier {
     String? name,
     List<StoredMember>? members,
     List<StoredExpense>? expenses,
+    List<StoredPaymentAccount>? paymentAccounts,
   }) =>
       current.copyWith(
         name: name,
         members: members,
         expenses: expenses,
+        paymentAccounts: paymentAccounts,
         updatedAtMs: _nowMs(),
         version: current.version + 1,
       );
@@ -325,6 +392,16 @@ final class TripController extends ChangeNotifier {
     }
     final ids = trip.members.map((member) => member.id).toSet();
     if (ids.length != trip.members.length) throw const FormatException('Duplicate member identifiers.');
+    final paymentMembers = <String>{};
+    for (final account in trip.paymentAccounts) {
+      account.toDomain();
+      if (!ids.contains(account.memberId)) {
+        throw const FormatException('Payment account references an unknown member.');
+      }
+      if (!paymentMembers.add(account.memberId)) {
+        throw const FormatException('A member may only have one active payment account in this MVP.');
+      }
+    }
     for (final expense in trip.expenses) {
       expense.toDomain(tripId: trip.id, currencyCode: trip.currencyCode);
       if (!ids.containsAll(expense.payerMinorByMember.keys) || !ids.containsAll(expense.allocationMinorByMember.keys)) {
@@ -382,6 +459,7 @@ final class TripController extends ChangeNotifier {
             version: expense.version,
           ),
       ],
+      paymentAccounts: decoded.paymentAccounts,
       createdAtMs: decoded.createdAtMs == 0 ? now : decoded.createdAtMs,
       updatedAtMs: decoded.updatedAtMs == 0 ? now : decoded.updatedAtMs,
       version: decoded.version,
