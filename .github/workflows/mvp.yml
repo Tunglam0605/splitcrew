@@ -46,6 +46,18 @@ jobs:
       - run: dart analyze --fatal-infos
       - run: dart test
 
+  update-core:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/update_core
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+      - run: dart pub get
+      - run: dart analyze --fatal-infos
+      - run: dart test
+
   android-mvp:
     runs-on: ubuntu-latest
     steps:
@@ -68,6 +80,18 @@ jobs:
           rm -rf apps/mobile/android
           cp -R "$tmp/mobile/android" apps/mobile/android
           cp "$tmp/mobile/.metadata" apps/mobile/.metadata
+      - name: Allow user-authorized APK updates
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          manifest = Path('apps/mobile/android/app/src/main/AndroidManifest.xml')
+          text = manifest.read_text()
+          permission = '    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />\n'
+          if 'android.permission.REQUEST_INSTALL_PACKAGES' not in text:
+              text = text.replace('<application', permission + '    <application', 1)
+          manifest.write_text(text)
+          PY
       - name: Install Flutter dependencies
         working-directory: apps/mobile
         run: flutter pub get

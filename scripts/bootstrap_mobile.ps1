@@ -15,12 +15,20 @@ try {
     Copy-Item -Recurse (Join-Path $Generated 'android') $AndroidDir
     Copy-Item (Join-Path $Generated '.metadata') (Join-Path $MobileDir '.metadata') -Force
 
+    $Manifest = Join-Path $AndroidDir 'app\src\main\AndroidManifest.xml'
+    $ManifestText = Get-Content $Manifest -Raw
+    if ($ManifestText -notmatch 'android.permission.REQUEST_INSTALL_PACKAGES') {
+        $Permission = '    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />' + [Environment]::NewLine
+        $ManifestText = $ManifestText.Replace('<application', $Permission + '    <application')
+        Set-Content -Path $Manifest -Value $ManifestText -NoNewline
+    }
+
     Push-Location $MobileDir
     flutter pub get
     if ($LASTEXITCODE -ne 0) { throw 'flutter pub get failed.' }
     Pop-Location
 
-    Write-Host 'Android platform generated. Run: cd apps/mobile; flutter run'
+    Write-Host 'Android platform generated with updater permission. Run: cd apps/mobile; flutter run'
 }
 finally {
     if ((Get-Location).Path -eq $MobileDir) { Pop-Location }
