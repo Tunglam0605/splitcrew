@@ -103,7 +103,7 @@ final class MemoryReceiptFileStore implements ReceiptFileStore {
       id: receiptId,
       expenseId: expenseId,
       localPath: sourcePath,
-      sha256: '0' * 64,
+      sha256: List.filled(64, '0').join(),
       originalName: originalName,
       mimeType: mimeType,
       sizeBytes: 1,
