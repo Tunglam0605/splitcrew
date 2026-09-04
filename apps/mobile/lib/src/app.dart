@@ -4,6 +4,7 @@ import 'package:splitcrew_update_core/splitcrew_update_core.dart';
 import 'app_state.dart';
 import 'home_page.dart';
 import 'payment_ui.dart';
+import 'receipt_ui.dart';
 import 'settings_page.dart';
 import 'update_service.dart';
 
@@ -36,9 +37,26 @@ final class SplitCrewApp extends StatelessWidget {
           return Stack(
             children: [
               Positioned.fill(child: page),
+              if (controller.hasTrip)
+                Positioned(
+                  left: 16,
+                  bottom: 72,
+                  child: SafeArea(
+                    child: FloatingActionButton.small(
+                      heroTag: 'receipt-center',
+                      tooltip: 'Receipt evidence',
+                      onPressed: () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => ReceiptCenterPage(controller: controller),
+                        ),
+                      ),
+                      child: const Icon(Icons.photo_camera_back_outlined),
+                    ),
+                  ),
+                ),
               Positioned(
                 left: 16,
-                bottom: controller.hasTrip ? 72 : 16,
+                bottom: controller.hasTrip ? 128 : 16,
                 child: SafeArea(
                   child: AnimatedBuilder(
                     animation: updates,
