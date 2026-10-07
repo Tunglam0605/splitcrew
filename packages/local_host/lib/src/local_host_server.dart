@@ -239,6 +239,9 @@ final class LocalHostServer {
       );
 
   static Middleware _corsForLan() => (innerHandler) => (request) async {
+        if (request.headers['upgrade']?.toLowerCase() == 'websocket') {
+          return innerHandler(request);
+        }
         if (request.method == 'OPTIONS') {
           return Response.ok('', headers: _corsHeaders);
         }
