@@ -252,6 +252,8 @@ final class LocalHostServer {
   static Middleware _jsonErrorBoundary() => (innerHandler) => (request) async {
         try {
           return await innerHandler(request);
+        } on HijackException {
+          rethrow;
         } on FormatException catch (error) {
           return _json(400, {'error': 'BAD_REQUEST', 'message': error.message});
         } catch (_) {
