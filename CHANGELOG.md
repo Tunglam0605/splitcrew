@@ -2,7 +2,23 @@
 
 All notable changes to SplitCrew are documented here.
 
-## [Unreleased] — v0.11.0-alpha
+## [Unreleased] — v0.12.0-alpha
+
+### Added
+
+- Member self-profile editing from the synchronized member workspace.
+- Durable queued rename-member and payment-profile mutations using the existing SQLite pending-operation queue.
+- Member entity-version and payment-account entity-version guards in addition to canonical trip revision checks.
+- Focused regression tests for offline queue behavior, idempotency, self-only authorization and stale member/payment versions.
+
+### Safety / consistency
+
+- Member devices never mutate their cached canonical replica before the owner host accepts the operation.
+- Entity-version conflicts refresh the canonical snapshot when possible before the queued operation is blocked for review.
+- Payment profile creation uses a nullable expected version: null explicitly means the member expects no existing owner-side profile.
+- Member-side payment removal is not silently emulated until a dedicated remove operation exists.
+
+## v0.11.0-alpha
 
 ### Added
 

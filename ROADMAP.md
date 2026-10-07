@@ -74,6 +74,7 @@ SplitCrew is developed in vertical milestones. Every milestone must preserve det
 - [x] Host reconnection and automatic queue flush
 - [x] Cached member replica stays non-authoritative offline
 - [x] Owner recovery/export-import foundation
+- [x] Queued self-profile rename/payment-profile mutations with entity-version guards
 - [ ] Generalize queue to remaining mutable operation types
 - [ ] Settlement acknowledgement synchronization
 
