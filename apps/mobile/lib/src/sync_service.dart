@@ -675,6 +675,7 @@ final class MobileSyncController extends ChangeNotifier {
           state: PendingSyncState.queued,
           attemptCount: 0,
           updatedAtEpochMs: DateTime.now().millisecondsSinceEpoch,
+          enqueueSequence: entry.enqueueSequence,
           lastError: 'Rebased after stale revision ${entry.operation.expectedTripRevision}.',
         );
         await _queueStore.upsert(rebased);

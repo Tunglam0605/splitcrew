@@ -128,15 +128,17 @@ Offline member mutations use a separate SQLite database (`splitcrew-sync-queue.d
 - queue state (`queued` or `blocked`)
 - attempt count
 - last error
-- updated timestamp
+- updated timestamp (diagnostics/retry metadata only)
+- stable enqueue sequence
 
-The queue remains non-authoritative. The owner-host commit is the only canonical mutation.
+The queue remains non-authoritative. The owner-host commit is the only canonical mutation. Flush order is determined only by the stable enqueue sequence; retry timestamps must never reorder user intent.
 
 ## Migration guarantees
 
 - v1 → v2 creates payment routing storage.
 - v2 → v3 creates receipt metadata storage.
 - v3 → v4 creates settlement acknowledgement history.
+- pending queue v1 → v2 adds and deterministically backfills stable enqueue sequence using the legacy `updated_at_ms, operation_id` order.
 - Missing JSON fields for newer collections normalize to empty lists so older backups/snapshots remain readable.
 - The legacy `splitcrew.trip.v1` SharedPreferences payload is imported only when SQLite has no current trip, then removed after a successful normalized write.
 
