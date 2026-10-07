@@ -4,7 +4,7 @@
 
 Validate the Android-first local-first application and owner-hosted LAN workflow without allowing a green build to depend on manual smoke tests alone.
 
-The current development line is v0.13 alpha.
+The current development line is v0.14 alpha.
 
 ## Automated acceptance gates
 
@@ -22,7 +22,8 @@ Current focused mobile gates include:
 - trip summary PNG/share UI;
 - repayment VietQR PNG/share UI;
 - member profile/payment offline synchronization;
-- settlement ledger, SQLite v3→v4 migration, settlement UI and encrypted backup/restore.
+- settlement ledger, SQLite v3→v4 migration, settlement UI and encrypted backup/restore;
+- durable queue same-millisecond ordering, retry stability, restart persistence and queue v1→v2 migration.
 
 ## Current testable scope
 

@@ -138,6 +138,10 @@ jobs:
         working-directory: apps/mobile
         timeout-minutes: 2
         run: flutter test test/repayment_qr_share_test.dart --reporter expanded
+      - name: Test durable queue ordering
+        working-directory: apps/mobile
+        timeout-minutes: 3
+        run: flutter test test/sync_queue_store_test.dart --reporter expanded
       - name: Test member profile sync
         working-directory: apps/mobile
         timeout-minutes: 2

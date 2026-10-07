@@ -65,6 +65,7 @@ SplitCrew is developed in vertical milestones. Every milestone must preserve det
 
 ## M7 — Offline Synchronization
 - [x] Durable SQLite pending-operation queue
+- [x] Stable enqueue-sequence ordering across retry/restart/migration
 - [x] Idempotent operation UUIDs
 - [x] Queued create/update/delete expense mutations
 - [x] Secure member-session storage

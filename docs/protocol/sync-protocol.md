@@ -73,14 +73,14 @@ A member device never promotes its cached replica to canonical state.
 
 When the owner host is unavailable:
 
-1. an allowed mutation is serialized to the durable SQLite pending queue;
+1. an allowed mutation is serialized to the durable SQLite pending queue with a stable enqueue sequence;
 2. the cached canonical trip remains unchanged;
 3. the UI reports the mutation as queued.
 
 When the host is reachable again:
 
 1. the client refreshes or receives a revision notification;
-2. queued operations are submitted in order;
+2. queued operations are submitted strictly by stable enqueue sequence; retry timestamps and UUIDs do not reorder them;
 3. `STALE_REVISION` causes a canonical refresh/rebase;
 4. entity expectations remain unchanged;
 5. an entity conflict becomes a blocked operation requiring user review;

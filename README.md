@@ -4,7 +4,7 @@
 
 SplitCrew is an Apache-2.0 Flutter application for shared expenses. It works as a standalone local app and also supports an owner-hosted LAN group mode where one owner's phone is authoritative and nearby member phones keep cached replicas. A public cloud server is not required for same-network use.
 
-> **Current development line: v0.13 alpha — append-only settlement acknowledgement ledger with offline synchronization on top of the tested v0.12 profile-sync baseline.**
+> **Current development line: v0.14 alpha — stable durable-queue ordering and migration hardening on top of the tested v0.13 settlement baseline.**
 
 ## What is implemented
 
@@ -19,7 +19,7 @@ SplitCrew is an Apache-2.0 Flutter application for shared expenses. It works as 
 - Owner-hosted LAN sessions with short-lived single-use invites.
 - QR invite rendering and member camera scanning.
 - REST-authoritative commands/snapshots with authenticated WebSocket revision notifications and polling fallback.
-- Durable offline mutation queue for member-created/edited/deleted expenses and member self-profile/payment mutations.
+- Durable offline mutation queue with stable enqueue sequencing across retry/restart for expense, profile/payment and settlement mutations.
 - Idempotent operation IDs, optimistic revisions and explicit entity-version conflicts.
 - Secure local storage for member session credentials.
 - Encrypted backup/recovery for canonical trip data and receipt evidence.

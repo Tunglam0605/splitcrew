@@ -2,7 +2,25 @@
 
 All notable changes to SplitCrew are documented here.
 
-## [Unreleased] — v0.13.0-alpha
+## [Unreleased] — v0.14.0-alpha
+
+### Queue hardening
+
+- Pending operations now receive a stable durable enqueue sequence independent of retry/update timestamps.
+- Same-millisecond operations preserve user submission order instead of falling back to UUID ordering.
+- Retry metadata updates never move an older operation behind later work.
+- Stale-revision rebases keep the original queue sequence even when the operation UUID changes.
+- Pending-queue SQLite schema v1 upgrades to v2 and deterministically backfills existing rows without dropping queued or blocked operations.
+- Queue ordering survives store restart and new operations continue from the migrated maximum sequence.
+
+### Regression coverage
+
+- same-millisecond enqueue ordering;
+- retry ordering;
+- restart persistence;
+- queue schema migration and metadata preservation.
+
+## v0.13.0-alpha
 
 ### Added
 
