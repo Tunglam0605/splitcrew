@@ -273,8 +273,10 @@ ORDER BY p.created_at_ms ASC
   Future<void> save(StoredTrip trip) async {
     final db = await _open();
     await db.transaction((txn) async {
-      await txn.delete('expenses', where: 'trip_id = ?', whereArgs: [trip.id]);
-      await txn.delete('members', where: 'trip_id = ?', whereArgs: [trip.id]);
+      // SplitCrew intentionally stores one current trip. Replacing the root
+      // inside the same SQLite transaction keeps backup restore atomic and
+      // prevents stale trips from surviving an import.
+      await txn.delete('trips');
       await txn.insert(
         'trips',
         {

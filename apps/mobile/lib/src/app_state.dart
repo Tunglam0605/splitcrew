@@ -329,6 +329,14 @@ final class TripController extends ChangeNotifier {
     }
   }
 
+  Future<void> replaceFromBackup(StoredTrip restored) async {
+    _validateStoredTrip(restored);
+    await _repository.save(restored);
+    _trip = restored;
+    _loadError = null;
+    notifyListeners();
+  }
+
   Future<void> reset() async {
     final receipts = [
       for (final expense in _trip?.expenses ?? const <StoredExpense>[])

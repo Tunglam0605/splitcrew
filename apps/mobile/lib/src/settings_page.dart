@@ -1,17 +1,27 @@
 import 'package:flutter/material.dart';
 import 'package:splitcrew_update_core/splitcrew_update_core.dart';
 
+import 'app_state.dart';
+import 'backup_ui.dart';
+import 'sync_service.dart';
 import 'update_service.dart';
 
 final class SettingsPage extends StatelessWidget {
-  const SettingsPage({super.key, required this.updates});
+  const SettingsPage({
+    super.key,
+    required this.updates,
+    required this.controller,
+    required this.sync,
+  });
 
   final UpdateController updates;
+  final TripController controller;
+  final MobileSyncController sync;
 
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: updates,
+      animation: Listenable.merge([updates, controller, sync]),
       builder: (context, _) {
         final snapshot = updates.snapshot;
         final release = snapshot.availableRelease;
@@ -32,6 +42,39 @@ final class SettingsPage extends StatelessWidget {
                       const SizedBox(height: 4),
                       const Text('Distribution channel: GitHub Releases'),
                     ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text('Data safety', style: Theme.of(context).textTheme.titleLarge),
+              const SizedBox(height: 6),
+              Text(
+                controller.hasTrip
+                    ? 'Create a portable encrypted recovery copy of the canonical trip, payment routing profiles and receipt evidence.'
+                    : 'Restore an encrypted owner backup on a fresh or reset device.',
+              ),
+              const SizedBox(height: 12),
+              Card(
+                child: ListTile(
+                  leading: const CircleAvatar(child: Icon(Icons.backup_outlined)),
+                  title: const Text('Backup & recovery'),
+                  subtitle: Text(
+                    sync.isMemberSession
+                        ? 'Member replicas cannot create owner recovery backups.'
+                        : sync.isHostRunning
+                            ? 'Stop Host Session before creating or restoring an owner backup.'
+                            : controller.hasTrip
+                                ? 'Encrypted export and validated owner restore.'
+                                : 'Restore a canonical trip from an encrypted .splitcrew file.',
+                  ),
+                  trailing: const Icon(Icons.chevron_right_rounded),
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => BackupRecoveryPage(
+                        controller: controller,
+                        sync: sync,
+                      ),
+                    ),
                   ),
                 ),
               ),

@@ -1,9 +1,8 @@
 # SplitCrew Roadmap
 
-SplitCrew is developed in vertical milestones. Each milestone must keep the money-calculation core deterministic and `main` testable.
+SplitCrew is developed in vertical milestones. Every milestone must preserve deterministic money arithmetic, offline local use, and a green main branch.
 
 ## M0 — Foundation
-
 - [x] Public repository
 - [x] Apache-2.0 license
 - [x] Architecture documentation
@@ -11,81 +10,73 @@ SplitCrew is developed in vertical milestones. Each milestone must keep the mone
 - [x] CI foundation
 
 ## M1 — Domain Core
-
-- [x] Money value object using integer minor units
-- [x] Trip and member entities
-- [x] Expense aggregate
-- [x] Multiple payers per expense
-- [x] Allocation model
-- [x] Domain money-conservation invariants
+- [x] Integer-minor-unit money value object
+- [x] Trip/member/expense entities
+- [x] Multiple payers and allocation model
+- [x] Money-conservation invariants
 
 ## M2 — Split Engine
-
 - [x] Equal split
 - [x] Exact-amount split
-- [x] Percentage split using integer basis points
+- [x] Percentage split with integer basis points
 - [x] Share/weight split
-- [x] Per-item equal allocation and aggregation
-- [x] Deterministic remainder tests
+- [x] Per-item allocation foundation
+- [x] Deterministic remainder handling
 
 ## M3 — Settlement Engine
-
-- [x] Per-member balance calculation
-- [x] Settlement generation
+- [x] Per-member balances
 - [x] Deterministic debt simplification
 - [x] User-facing paid/share/net explanation
-- [x] Expense-level payer/allocation audit view
+- [x] Expense audit view
 - [ ] Persistent settlement confirmation history
 
 ## M4 — Local Mobile MVP
-
-- [x] Flutter application shell
-- [x] Create a local trip
-- [x] Add members
-- [x] Add/delete expenses
-- [x] One or multiple payers
-- [x] Equal/exact/percentage/share split UI
-- [x] Balance and settlement screens
-- [x] Automated Android debug APK artifact
-- [x] SQLite persistence with normalized tables
-- [x] One-time v0.1 SharedPreferences import
-- [x] UUID identifiers, timestamps, and versions
-- [x] Rename/delete trip flow
-- [x] Rename/remove member flow with reference guards
-- [x] Edit expense flow
-- [x] Expense detail/audit flow
-- [ ] Backup/export/import UX
+- [x] Flutter Android-first app
+- [x] Trip/member/expense CRUD
+- [x] Flexible payer/split UX
+- [x] SQLite normalized persistence
+- [x] SharedPreferences v0.1 migration
+- [x] UUID/timestamp/version metadata
+- [x] Android debug APK CI artifact
+- [x] Encrypted backup/export/import foundation
 - [ ] Production accessibility/usability pass
 
 ## M5 — Receipt & Payment
-
-- [ ] Receipt image attachment
-- [ ] Payment-account abstraction
-- [ ] VietQR adapter
-- [ ] Shareable repayment QR
-- [ ] Export/share trip summary image
+- [x] Camera/gallery receipt attachment
+- [x] Managed local receipt storage
+- [x] Payment-account abstraction
+- [x] VietQR adapter
+- [x] Exact repayment QR generation
+- [ ] Export/share polished trip summary image
 
 ## M6 — Owner-hosted Group Mode
-
-- [ ] Owner device as authoritative trip host
-- [ ] Invite token + QR join
-- [ ] Member roles and permissions
-- [ ] LAN host discovery
-- [ ] REST/WebSocket transport adapter
-- [ ] Realtime canonical-state broadcast
+- [x] Owner phone as authoritative LAN host
+- [x] Short-lived one-time invite token
+- [x] Owner/member permissions
+- [x] REST join/snapshot/operation transport
+- [x] Authenticated WebSocket revision notifications
+- [x] REST polling fallback and reconnect backoff
+- [x] Realtime canonical snapshot refresh
+- [x] QR invite rendering
+- [x] Member camera QR scan
+- [ ] Encrypted LAN application transport / authenticated channel hardening
+- [ ] Receipt-media synchronization
 
 ## M7 — Offline Synchronization
-
-- [ ] Local operation queue
-- [x] UUID identifiers suitable for multi-device creation
-- [x] Base entity version fields
-- [ ] Optimistic concurrency checks across devices
-- [ ] Conflict UX
-- [ ] Host reconnection/resync
-- [ ] Host recovery/export-import strategy
+- [x] Durable SQLite pending-operation queue
+- [x] Idempotent operation UUIDs
+- [x] Queued create/update/delete expense mutations
+- [x] Secure member-session storage
+- [x] Optimistic trip revision checks
+- [x] Expense entity-version conflict guards
+- [x] Explicit blocked/conflict UX
+- [x] Host reconnection and automatic queue flush
+- [x] Cached member replica stays non-authoritative offline
+- [x] Owner recovery/export-import foundation
+- [ ] Generalize queue to remaining mutable operation types
+- [ ] Settlement acknowledgement synchronization
 
 ## M8 — Smart Receipts
-
 - [ ] OCR pipeline
 - [ ] Detect item names, quantities and totals
 - [ ] Assign people per item
@@ -93,22 +84,22 @@ SplitCrew is developed in vertical milestones. Each milestone must keep the mone
 - [ ] Manual verification before commit
 
 ## M9 — Public Beta & Update Delivery
-
 - [x] Automated Android debug APK build
-- [ ] Signed GitHub Release APK
-- [ ] Automatic non-blocking version check on app startup
-- [ ] Manual **Check for updates** action in Settings/About
-- [ ] Semantic-version comparison and optional/required update policy
-- [ ] GitHub Releases update channel with official APK checksum verification
-- [ ] Guided APK update through Android's system package installer for direct GitHub distribution
-- [ ] Google Play in-app update adapter when Play Store distribution is enabled
-- [ ] Upgrade/migration tests across released schemas
+- [x] Automatic non-blocking version check
+- [x] Manual Check for updates action
+- [x] Semantic-version comparison
+- [x] GitHub Releases update provider
+- [x] SHA-256 APK verification
+- [x] User-authorized Android package installer flow
+- [ ] Signed public GitHub Release APK
+- [ ] Upgrade/migration matrix across released schemas
 - [ ] Accessibility review
 - [ ] Privacy review
 - [ ] Beta feedback cycle
+- [ ] Google Play in-app update adapter when Play Store distribution is enabled
 
-> SplitCrew must never rely on silent installation for normal consumer Android devices. It may automatically detect and download an official update, but installation remains under Android's system security flow. When distributed through Google Play, the app should use the Play in-app update mechanism.
+> SplitCrew never silently installs updates. Android's system security flow remains authoritative.
 
-## v1.0
+## v1.0 exit criteria
 
-A stable Android-first release with local-first expense management, flexible splitting, settlement, receipts, QR repayment, production-ready owner-hosted group synchronization, and a built-in safe update path.
+A stable Android-first release with local-first expense management, receipt evidence, VietQR repayment, owner-hosted group synchronization, durable offline mutations, tested encrypted owner recovery, signed distribution, and production accessibility/privacy review.
