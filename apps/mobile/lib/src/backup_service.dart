@@ -3,7 +3,6 @@ import 'dart:typed_data';
 import 'app_state.dart';
 import 'backup_codec.dart';
 import 'receipt_store.dart';
-import 'stored_models.dart';
 
 final class TripBackupService {
   TripBackupService({

@@ -1,7 +1,7 @@
 name: splitcrew_mobile
 description: SplitCrew Android-first local-first mobile MVP.
 publish_to: none
-version: 0.12.0-alpha.1+12
+version: 0.13.0-alpha.1+13
 
 environment:
   sdk: '>=3.4.0 <4.0.0'
@@ -47,6 +47,7 @@ dependencies:
     path: ../../packages/update_core
 
 dev_dependencies:
+  sqflite_common_ffi: ^2.3.7
   flutter_test:
     sdk: flutter
   flutter_lints: ^5.0.0

@@ -40,7 +40,7 @@ final class SplitCrewApp extends StatelessWidget {
           final page = controller.hasTrip
               ? isMember
                   ? MemberSyncedWorkspace(controller: controller, sync: sync)
-                  : TripWorkspace(controller: controller)
+                  : TripWorkspace(controller: controller, sync: sync)
               : CreateTripPage(controller: controller, loadError: controller.loadError);
 
           return Stack(

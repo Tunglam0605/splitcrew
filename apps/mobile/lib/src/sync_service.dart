@@ -449,6 +449,51 @@ final class MobileSyncController extends ChangeNotifier {
     );
   }
 
+  Future<SyncWriteDisposition> markSettlement({
+    required String fromMemberId,
+    required String toMemberId,
+    required int amountMinor,
+  }) async {
+    final trip = tripController.trip;
+    if (trip == null) throw StateError('No active trip.');
+
+    if (_mode != MobileSyncMode.member) {
+      final owner = trip.members.where((member) => member.isOwner).firstOrNull;
+      if (owner == null) throw StateError('Trip owner is missing.');
+      await tripController.acknowledgeSettlement(
+        fromMemberId: fromMemberId,
+        toMemberId: toMemberId,
+        amountMinor: amountMinor,
+        confirmedByMemberId: owner.id,
+      );
+      return SyncWriteDisposition.committed;
+    }
+
+    final actor = _memberId;
+    if (actor == null) throw StateError('No active member profile.');
+    if (fromMemberId != actor) {
+      throw StateError('Members may only record their own outgoing settlement.');
+    }
+    final stillSuggested = tripController.settlements.any(
+      (transfer) =>
+          transfer.fromMemberId == fromMemberId &&
+          transfer.toMemberId == toMemberId &&
+          transfer.amount.minorUnits == amountMinor,
+    );
+    if (!stillSuggested) {
+      throw StateError('This settlement suggestion is no longer current. Refresh before recording payment.');
+    }
+
+    return _enqueueMemberOperation(
+      SyncOperationType.markSettlement,
+      {
+        'fromMemberId': fromMemberId,
+        'toMemberId': toMemberId,
+        'amountMinor': amountMinor,
+      },
+    );
+  }
+
   Future<SyncWriteDisposition> _enqueueMemberOperation(
     SyncOperationType type,
     Map<String, Object?> payload,
@@ -971,7 +1016,8 @@ final class _MobileTripHostBackend implements HostTripBackend {
         type == SyncOperationType.updateExpense ||
         type == SyncOperationType.deleteExpense ||
         type == SyncOperationType.renameMember ||
-        type == SyncOperationType.updatePaymentAccount;
+        type == SyncOperationType.updatePaymentAccount ||
+        type == SyncOperationType.markSettlement;
   }
 
   @override
@@ -1164,7 +1210,29 @@ final class _MobileTripHostBackend implements HostTripBackend {
           accountIdentifier: payload['accountIdentifier'] as String,
         );
       case SyncOperationType.markSettlement:
-        throw const _ForbiddenOperation('Settlement acknowledgements are not enabled in this sync slice yet.');
+        final fromMemberId = payload['fromMemberId'] as String;
+        final toMemberId = payload['toMemberId'] as String;
+        final amountMinor = payload['amountMinor'] as int;
+        if (!isOwner && fromMemberId != actor.id) {
+          throw const _ForbiddenOperation('Members may only record their own outgoing settlement.');
+        }
+        final stillSuggested = controller.settlements.any(
+          (transfer) =>
+              transfer.fromMemberId == fromMemberId &&
+              transfer.toMemberId == toMemberId &&
+              transfer.amount.minorUnits == amountMinor,
+        );
+        if (!stillSuggested) {
+          throw const _EntityVersionConflict(
+            'Settlement suggestion changed on the owner device. Refresh before recording payment.',
+          );
+        }
+        await controller.acknowledgeSettlement(
+          fromMemberId: fromMemberId,
+          toMemberId: toMemberId,
+          amountMinor: amountMinor,
+          confirmedByMemberId: actor.id,
+        );
     }
   }
 

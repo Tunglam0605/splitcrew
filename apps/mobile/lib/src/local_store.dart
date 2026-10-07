@@ -28,7 +28,7 @@ final class MemoryTripRepository implements TripRepository {
 }
 
 final class SqliteTripRepository implements TripRepository {
-  static const schemaVersion = 3;
+  static const schemaVersion = 4;
 
   Database? _database;
 
@@ -44,6 +44,7 @@ final class SqliteTripRepository implements TripRepository {
         await _createCoreTables(db);
         await _createPaymentAccountsTable(db);
         await _createReceiptAssetsTable(db);
+        await _createSettlementAcknowledgementsTable(db);
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -51,6 +52,9 @@ final class SqliteTripRepository implements TripRepository {
         }
         if (oldVersion < 3) {
           await _createReceiptAssetsTable(db);
+        }
+        if (oldVersion < 4) {
+          await _createSettlementAcknowledgementsTable(db);
         }
       },
     );
@@ -154,6 +158,28 @@ CREATE TABLE IF NOT EXISTS receipt_assets (
     await db.execute('CREATE INDEX IF NOT EXISTS idx_receipt_assets_expense ON receipt_assets(expense_id)');
   }
 
+  Future<void> _createSettlementAcknowledgementsTable(Database db) async {
+    await db.execute('''
+CREATE TABLE IF NOT EXISTS settlement_acknowledgements (
+  id TEXT PRIMARY KEY,
+  trip_id TEXT NOT NULL,
+  from_member_id TEXT NOT NULL,
+  to_member_id TEXT NOT NULL,
+  amount_minor INTEGER NOT NULL,
+  confirmed_by_member_id TEXT NOT NULL,
+  created_at_ms INTEGER NOT NULL,
+  version INTEGER NOT NULL,
+  FOREIGN KEY(trip_id) REFERENCES trips(id) ON DELETE CASCADE,
+  FOREIGN KEY(from_member_id) REFERENCES members(id),
+  FOREIGN KEY(to_member_id) REFERENCES members(id),
+  FOREIGN KEY(confirmed_by_member_id) REFERENCES members(id)
+)
+''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_settlement_ack_trip ON settlement_acknowledgements(trip_id, created_at_ms)',
+    );
+  }
+
   @override
   Future<StoredTrip?> loadCurrent() async {
     final db = await _open();
@@ -183,6 +209,12 @@ ORDER BY p.created_at_ms ASC
 ''',
       [tripId],
     );
+    final settlementRows = await db.query(
+      'settlement_acknowledgements',
+      where: 'trip_id = ?',
+      whereArgs: [tripId],
+      orderBy: 'version ASC, created_at_ms ASC, id ASC',
+    );
 
     final members = [
       for (final member in memberRows)
@@ -208,6 +240,19 @@ ORDER BY p.created_at_ms ASC
           createdAtMs: payment['created_at_ms'] as int,
           updatedAtMs: payment['updated_at_ms'] as int,
           version: payment['version'] as int,
+        ),
+    ];
+
+    final settlementAcknowledgements = [
+      for (final item in settlementRows)
+        StoredSettlementAcknowledgement(
+          id: item['id'] as String,
+          fromMemberId: item['from_member_id'] as String,
+          toMemberId: item['to_member_id'] as String,
+          amountMinor: item['amount_minor'] as int,
+          confirmedByMemberId: item['confirmed_by_member_id'] as String,
+          createdAtMs: item['created_at_ms'] as int,
+          version: item['version'] as int,
         ),
     ];
 
@@ -263,6 +308,7 @@ ORDER BY p.created_at_ms ASC
       members: members,
       expenses: expenses,
       paymentAccounts: paymentAccounts,
+      settlementAcknowledgements: settlementAcknowledgements,
       createdAtMs: row['created_at_ms'] as int,
       updatedAtMs: row['updated_at_ms'] as int,
       version: row['version'] as int,
@@ -313,6 +359,18 @@ ORDER BY p.created_at_ms ASC
           'version': payment.version,
         });
       }
+      for (final acknowledgement in trip.settlementAcknowledgements) {
+        await txn.insert('settlement_acknowledgements', {
+          'id': acknowledgement.id,
+          'trip_id': trip.id,
+          'from_member_id': acknowledgement.fromMemberId,
+          'to_member_id': acknowledgement.toMemberId,
+          'amount_minor': acknowledgement.amountMinor,
+          'confirmed_by_member_id': acknowledgement.confirmedByMemberId,
+          'created_at_ms': acknowledgement.createdAtMs,
+          'version': acknowledgement.version,
+        });
+      }
       for (final expense in trip.expenses) {
         await txn.insert('expenses', {
           'id': expense.id,
@@ -353,6 +411,12 @@ ORDER BY p.created_at_ms ASC
         }
       }
     });
+  }
+
+  Future<void> close() async {
+    final database = _database;
+    _database = null;
+    if (database != null) await database.close();
   }
 
   @override

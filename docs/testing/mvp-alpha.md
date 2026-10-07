@@ -1,117 +1,144 @@
-# SplitCrew MVP Alpha Test Plan
+# SplitCrew Android Alpha Test Plan
 
 ## Purpose
 
-This build validates the local expense workflow before owner-hosted networking, receipt OCR, and payment QR are introduced.
+Validate the Android-first local-first application and owner-hosted LAN workflow without allowing a green build to depend on manual smoke tests alone.
+
+The current development line is v0.13 alpha.
+
+## Automated acceptance gates
+
+Every feature branch and `main` must keep these gates green:
+
+1. Foundation package analyze/tests.
+2. Flutter analyze.
+3. Focused regression tests for high-risk feature slices.
+4. Full Flutter test suite.
+5. Android debug APK build.
+6. APK artifact upload.
+
+Current focused mobile gates include:
+
+- trip summary PNG/share UI;
+- repayment VietQR PNG/share UI;
+- member profile/payment offline synchronization;
+- settlement ledger, SQLite v3→v4 migration, settlement UI and encrypted backup/restore.
 
 ## Current testable scope
 
-- Create one local trip/crew.
-- Add members without online accounts.
-- Add an expense with one payer or multiple payers.
-- Split equally.
-- Split by exact amount.
-- Split by percentage with up to two decimal places.
-- Split by integer shares/weights.
-- Persist the trip locally across app restarts.
-- Calculate per-member net balances.
-- Generate deterministic suggested settlement transfers.
-- Delete an expense and recalculate balances.
+### Local canonical mode
 
-Per-item splitting is implemented and unit-tested in the core engine but is not exposed in the alpha UI yet.
+- Create a trip and members.
+- Add/edit/delete expenses with multiple payers.
+- Equal, exact, percentage and share/weight allocation.
+- Deterministic balances and debt simplification.
+- SQLite canonical persistence with migrations.
+- Receipt evidence in SplitCrew-managed local storage.
+- Safe VietQR routing profiles.
+- Exact repayment QR generation, save and share.
+- Canonical trip summary PNG export/share.
+- Encrypted owner backup and recovery.
+- Append-only settlement acknowledgement history.
 
-## Android installation from GitHub Actions
+### Owner-host LAN mode
 
-1. Open the repository's **Actions** tab.
-2. Open the latest successful **MVP checks and Android build** run on `main`.
-3. Download the `splitcrew-android-debug` artifact.
-4. Extract `app-debug.apk`.
-5. Copy the APK to an Android phone and allow installation from that source when Android asks.
+- Start/stop owner host.
+- Generate short-lived one-time member invite.
+- Scan invite QR or paste the payload.
+- Authenticate/pin host + trip identity.
+- Fetch canonical snapshots.
+- Receive WebSocket revision hints with polling fallback.
+- Queue offline expense/profile/payment/settlement mutations.
+- Idempotently retry queued operations.
+- Surface entity conflicts instead of silent last-write-wins.
 
-This is a debug build intended only for testing.
+## Core invariants
 
-## Local developer run
+1. Monetary values are integer minor units.
+2. Every expense conserves money exactly.
+3. All member balances sum to zero.
+4. Deterministic settlement transfers clear the current balances.
+5. Cached member state is never canonical before owner acceptance.
+6. Retrying an operation UUID cannot apply it twice.
+7. A member may mutate only the resources allowed for that member.
+8. Settlement acknowledgement is append-only and can record only a current exact suggested transfer at commit time.
+9. Historical settlement payments remain valid if later expenses change the current debt graph.
+10. Backup restore validates authenticated encryption, archive structure, receipt hashes and canonical model invariants before replacement.
 
-Requirements:
+## Manual acceptance scenarios
 
-- Flutter 3.35.2 or a compatible newer stable version.
-- Android SDK and a connected Android device/emulator.
+### A. Expense conservation
 
-Linux/macOS:
+Create a 1,000,000 VND expense with multiple payers and any supported split method.
 
-```bash
-./scripts/bootstrap_mobile.sh
-cd apps/mobile
-flutter run
-```
+Expected: payer sum and allocation sum must both equal exactly 1,000,000 VND. Invalid totals cannot be committed.
 
-Windows PowerShell:
+### B. Offline member mutation
 
-```powershell
-./scripts/bootstrap_mobile.ps1
-cd apps/mobile
-flutter run
-```
+1. Join an owner-hosted trip from another phone.
+2. Disconnect the member phone from the owner LAN.
+3. Edit an expense created by that member or change that member's own profile.
+4. Reconnect to the owner network.
 
-The bootstrap script generates only Flutter's Android platform boilerplate. Product source remains committed in `apps/mobile/lib`.
+Expected: the cached canonical state is not silently modified while offline; the operation appears pending, then commits or becomes explicitly blocked after owner validation.
 
-## Acceptance scenarios
+### C. Repayment QR
 
-### A. Equal split
+1. Configure a safe payment-routing profile for the repayment recipient.
+2. Open a deterministic suggested transfer.
+3. Generate the VietQR.
 
-1. Create `Da Nang 2026` with owner `Lam`.
-2. Add `Hoang` and `Thanh`.
-3. Add expense `Dinner` = `1,000,000` VND.
-4. Select Lam as payer and all three as participants.
-5. Select Equal.
+Expected: bank/account/recipient and exact integer-VND amount match the current suggested transfer. The user can save or share the QR PNG without taking a screenshot.
 
-Expected: allocations total exactly 1,000,000 VND, with any remainder distributed deterministically.
+### D. Settlement acknowledgement
 
-### B. Different amount per person
-
-Use a 600,000 VND expense with:
-
-- Lam: 120,000
-- Hoang: 180,000
-- Thanh: 300,000
-
-Expected: save succeeds. If the values do not total 600,000, save is rejected.
-
-### C. Multiple payers
-
-Create a 1,000,000 VND expense and enable Multiple payers:
-
-- Lam paid 600,000
-- Hoang paid 400,000
-
-Expected: save succeeds only when payer amounts total exactly 1,000,000 VND.
-
-### D. Settlement
-
-After several expenses, open Balances.
+1. Create expenses so member A owes member B.
+2. On A's member device, choose **Record paid**.
+3. Confirm the dialog.
+4. Test once online and once while temporarily offline.
 
 Expected:
 
-- all member net balances sum to zero;
-- positive members should receive money;
-- negative members should pay;
-- suggested transfers clear the balances exactly.
+- online: owner accepts the exact current suggestion and the debt disappears;
+- offline: an acknowledgement is queued while the cached canonical debt remains visible;
+- reconnect: owner revalidates the exact transfer before commit;
+- duplicate retries cannot clear the debt twice;
+- stale/changed debt becomes a conflict;
+- settlement history records payer, recipient, amount, recorder and time.
 
-### E. Offline persistence
+### E. Historical payment plus later expense
 
-1. Add members and expenses.
-2. Force-close the app.
-3. Disable Wi-Fi/mobile data.
-4. Reopen the app.
+1. Record a settlement payment that clears the current debt.
+2. Add a later expense that creates a new debt, potentially in the opposite direction.
+3. Restart the app and perform an encrypted backup/restore.
 
-Expected: local trip, expenses, balances, and settlements remain available.
+Expected: the old payment history remains valid and the new current debt is computed from the combined expense + payment ledger.
 
-## Known alpha limitations
+### F. SQLite migration
 
-- Android-first; iOS platform scaffold is not generated yet.
-- Local persistence currently uses `SharedPreferences` JSON as an alpha adapter; the production persistence milestone remains SQLite/Drift.
-- No receipt image capture yet.
-- No VietQR yet.
-- No owner-host/member LAN synchronization yet.
-- No member removal/editing or expense editing yet.
-- No migration framework yet; use **Reset local trip** if the alpha schema changes between incompatible development builds.
+Install/open a database created with schema v3, then start v0.13.
+
+Expected: schema upgrades to v4 without deleting the existing trip/member data; the settlement acknowledgement table becomes available and future acknowledgement history survives restart.
+
+### G. Owner recovery
+
+Create expenses, receipts, payment routing and settlement history; export an encrypted backup and restore it onto a clean local state.
+
+Expected: canonical trip data, settlement history and receipt evidence are restored; a wrong passphrase or modified ciphertext is rejected.
+
+## Android CI artifact
+
+1. Open GitHub Actions.
+2. Open the latest successful **MVP checks and Android build** run on `main`.
+3. Download `splitcrew-android-debug`.
+4. Extract and install `app-debug.apk` using Android's user-authorized package installation flow.
+
+The debug APK is for testing. Signed public distribution remains a later release gate.
+
+## Remaining production acceptance
+
+- Authenticated/encrypted LAN transport hardening.
+- Receipt-media synchronization between owner/member devices.
+- Accessibility and privacy review.
+- Signed public release and upgrade/migration matrix across released schemas.
+- Smart receipt OCR/item assignment after the recovery/sync surfaces remain stable.

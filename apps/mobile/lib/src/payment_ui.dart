@@ -4,15 +4,19 @@ import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:splitcrew_domain/splitcrew_domain.dart';
 import 'package:splitcrew_payment_qr/splitcrew_payment_qr.dart';
+import 'package:splitcrew_settlement_engine/splitcrew_settlement_engine.dart';
 
 import 'app_state.dart';
 import 'home_page.dart';
 import 'image_export.dart';
+import 'settlement_ui.dart';
+import 'sync_service.dart';
 
 final class TripWorkspace extends StatelessWidget {
-  const TripWorkspace({super.key, required this.controller});
+  const TripWorkspace({super.key, required this.controller, required this.sync});
 
   final TripController controller;
+  final MobileSyncController sync;
 
   @override
   Widget build(BuildContext context) {
@@ -28,7 +32,7 @@ final class TripWorkspace extends StatelessWidget {
               tooltip: 'Payments & QR',
               onPressed: () => Navigator.of(context).push(
                 MaterialPageRoute<void>(
-                  builder: (_) => PaymentCenterPage(controller: controller),
+                  builder: (_) => PaymentCenterPage(controller: controller, sync: sync),
                 ),
               ),
               child: const Icon(Icons.qr_code_2_rounded),
@@ -41,9 +45,10 @@ final class TripWorkspace extends StatelessWidget {
 }
 
 final class PaymentCenterPage extends StatelessWidget {
-  const PaymentCenterPage({super.key, required this.controller});
+  const PaymentCenterPage({super.key, required this.controller, required this.sync});
 
   final TripController controller;
+  final MobileSyncController sync;
 
   @override
   Widget build(BuildContext context) {
@@ -79,7 +84,9 @@ final class PaymentCenterPage extends StatelessWidget {
                 )
               else
                 for (final transfer in transfers)
-                  _SettlementQrCard(controller: controller, transfer: transfer),
+                  _SettlementQrCard(controller: controller, sync: sync, transfer: transfer),
+              const SizedBox(height: 24),
+              SettlementHistorySection(controller: controller, showEmpty: true),
             ],
           ),
         );
@@ -126,42 +133,57 @@ final class _PaymentProfileCard extends StatelessWidget {
 }
 
 final class _SettlementQrCard extends StatelessWidget {
-  const _SettlementQrCard({required this.controller, required this.transfer});
+  const _SettlementQrCard({required this.controller, required this.sync, required this.transfer});
 
   final TripController controller;
-  final dynamic transfer;
+  final MobileSyncController sync;
+  final SettlementTransfer transfer;
 
   @override
   Widget build(BuildContext context) {
-    final account = controller.paymentAccountForMember(transfer.toMemberId as String);
-    final amount = transfer.amount as Money;
+    final account = controller.paymentAccountForMember(transfer.toMemberId);
+    final amount = transfer.amount;
     return Card(
       child: ListTile(
         leading: const CircleAvatar(child: Icon(Icons.arrow_forward_rounded)),
         title: Text(
-          '${controller.memberName(transfer.fromMemberId as String)} → ${controller.memberName(transfer.toMemberId as String)}',
+          '${controller.memberName(transfer.fromMemberId)} → ${controller.memberName(transfer.toMemberId)}',
         ),
         subtitle: Text(
           account == null
-              ? 'Set up ${controller.memberName(transfer.toMemberId as String)} payment account to generate QR.'
+              ? 'Set up ${controller.memberName(transfer.toMemberId)} payment account to generate QR.'
               : '${_money(amount.minorUnits)} ₫ · fixed VietQR amount',
         ),
-        trailing: account == null
-            ? const Icon(Icons.qr_code_2_rounded)
-            : FilledButton.tonalIcon(
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (account != null)
+              IconButton(
+                tooltip: 'Repayment QR',
                 onPressed: () => Navigator.of(context).push(
                   MaterialPageRoute<void>(
                     builder: (_) => RepaymentQrPage(
                       controller: controller,
-                      fromMemberId: transfer.fromMemberId as String,
-                      toMemberId: transfer.toMemberId as String,
+                      fromMemberId: transfer.fromMemberId,
+                      toMemberId: transfer.toMemberId,
                       amount: amount,
                     ),
                   ),
                 ),
                 icon: const Icon(Icons.qr_code_2_rounded),
-                label: const Text('QR'),
               ),
+            IconButton.filledTonal(
+              tooltip: 'Record paid',
+              onPressed: () => confirmAndRecordSettlement(
+                context,
+                controller: controller,
+                sync: sync,
+                transfer: transfer,
+              ),
+              icon: const Icon(Icons.check_rounded),
+            ),
+          ],
+        ),
       ),
     );
   }

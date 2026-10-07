@@ -8,7 +8,6 @@ import 'package:splitcrew_mobile/src/backup_codec.dart';
 import 'package:splitcrew_mobile/src/backup_service.dart';
 import 'package:splitcrew_mobile/src/local_store.dart';
 import 'package:splitcrew_mobile/src/receipt_store.dart';
-import 'package:splitcrew_mobile/src/stored_models.dart';
 import 'package:splitcrew_split_engine/splitcrew_split_engine.dart';
 
 void main() {
@@ -62,12 +61,19 @@ void main() {
       createdAtMs: 100,
       updatedAtMs: 100,
     );
+    final restoredMember = const StoredMember(
+      id: 'member-new',
+      name: 'New member',
+      isOwner: false,
+      createdAtMs: 101,
+      updatedAtMs: 101,
+    );
     final restoredExpense = StoredExpense(
       id: 'expense-new',
       title: 'Restored expense',
       totalMinor: 90000,
       payerMinorByMember: const {'owner-new': 90000},
-      allocationMinorByMember: const {'owner-new': 90000},
+      allocationMinorByMember: const {'owner-new': 45000, 'member-new': 45000},
       createdByMemberId: 'owner-new',
       receipts: [restoredReceipt],
       createdAtMs: 200,
@@ -77,8 +83,18 @@ void main() {
       id: 'trip-new',
       name: 'Recovered trip',
       currencyCode: 'VND',
-      members: [restoredOwner],
+      members: [restoredOwner, restoredMember],
       expenses: [restoredExpense],
+      settlementAcknowledgements: const [
+        StoredSettlementAcknowledgement(
+          id: 'settlement-new',
+          fromMemberId: 'member-new',
+          toMemberId: 'owner-new',
+          amountMinor: 45000,
+          confirmedByMemberId: 'member-new',
+          createdAtMs: 250,
+        ),
+      ],
       createdAtMs: 100,
       updatedAtMs: 200,
       version: 7,
@@ -104,6 +120,8 @@ void main() {
     expect(controller.trip!.id, 'trip-new');
     expect(controller.trip!.name, 'Recovered trip');
     expect(controller.trip!.expenses.single.title, 'Restored expense');
+    expect(controller.trip!.settlementAcknowledgements, hasLength(1));
+    expect(controller.settlements, isEmpty);
 
     final managedReceipt = controller.trip!.expenses.single.receipts.single;
     expect(managedReceipt.id, 'receipt-new');
@@ -121,5 +139,7 @@ void main() {
     await reloaded.load();
     expect(reloaded.trip!.id, 'trip-new');
     expect(reloaded.trip!.expenses.single.receipts.single.id, 'receipt-new');
+    expect(reloaded.trip!.settlementAcknowledgements.single.id, 'settlement-new');
+    expect(reloaded.settlements, isEmpty);
   });
 }

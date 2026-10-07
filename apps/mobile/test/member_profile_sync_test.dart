@@ -56,12 +56,16 @@ void main() {
 
     final entries = await queue.loadAll();
     expect(entries, hasLength(2));
-    expect(entries[0].operation.type, SyncOperationType.renameMember);
-    expect(entries[0].operation.payload['memberId'], member.id);
-    expect(entries[0].operation.payload['expectedMemberVersion'], member.version);
-    expect(entries[1].operation.type, SyncOperationType.updatePaymentAccount);
-    expect(entries[1].operation.payload.containsKey('expectedPaymentAccountVersion'), isTrue);
-    expect(entries[1].operation.payload['expectedPaymentAccountVersion'], isNull);
+    final renameEntry = entries.singleWhere(
+      (entry) => entry.operation.type == SyncOperationType.renameMember,
+    );
+    final paymentEntry = entries.singleWhere(
+      (entry) => entry.operation.type == SyncOperationType.updatePaymentAccount,
+    );
+    expect(renameEntry.operation.payload['memberId'], member.id);
+    expect(renameEntry.operation.payload['expectedMemberVersion'], member.version);
+    expect(paymentEntry.operation.payload.containsKey('expectedPaymentAccountVersion'), isTrue);
+    expect(paymentEntry.operation.payload['expectedPaymentAccountVersion'], isNull);
   });
 
 

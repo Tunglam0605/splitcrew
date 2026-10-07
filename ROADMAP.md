@@ -28,7 +28,7 @@ SplitCrew is developed in vertical milestones. Every milestone must preserve det
 - [x] Deterministic debt simplification
 - [x] User-facing paid/share/net explanation
 - [x] Expense audit view
-- [ ] Persistent settlement confirmation history
+- [x] Persistent settlement confirmation history
 
 ## M4 — Local Mobile MVP
 - [x] Flutter Android-first app
@@ -76,7 +76,7 @@ SplitCrew is developed in vertical milestones. Every milestone must preserve det
 - [x] Owner recovery/export-import foundation
 - [x] Queued self-profile rename/payment-profile mutations with entity-version guards
 - [ ] Generalize queue to remaining mutable operation types
-- [ ] Settlement acknowledgement synchronization
+- [x] Settlement acknowledgement synchronization
 
 ## M8 — Smart Receipts
 - [ ] OCR pipeline

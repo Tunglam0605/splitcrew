@@ -2,7 +2,24 @@
 
 All notable changes to SplitCrew are documented here.
 
-## [Unreleased] — v0.12.0-alpha
+## [Unreleased] — v0.13.0-alpha
+
+### Added
+
+- Append-only settlement acknowledgement records in canonical trip state.
+- Settlement history UI showing payer, recipient, amount, recorder and timestamp.
+- Owner-authorized and member self-outgoing `markSettlement` operations through the existing durable queue.
+- SQLite schema v4 migration with persisted settlement acknowledgement history.
+- Backup/snapshot round-trip coverage for settlement history.
+- Focused tests for restart persistence, offline queueing, idempotency, authorization, stale/double acknowledgement rejection and schema migration.
+
+### Ledger semantics
+
+- Recorded payments adjust member balances without mutating or deleting expense history.
+- A payment is accepted only when its exact from/to/amount is a current owner-side settlement suggestion at commit time.
+- Historical payments remain valid after later expenses change the current debt graph; restore validation therefore checks append-only structure and authorization rather than replaying old payments against the final expense set.
+
+## v0.12.0-alpha
 
 ### Added
 
@@ -87,6 +104,5 @@ All notable changes to SplitCrew are documented here.
 
 - Signed public release pipeline and migration matrix.
 - Receipt media synchronization.
-- Settlement acknowledgement history/synchronization.
 - Accessibility/privacy acceptance.
 - OCR/item assignment.

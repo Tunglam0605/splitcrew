@@ -5,6 +5,7 @@ import 'package:splitcrew_split_engine/splitcrew_split_engine.dart';
 import 'app_state.dart';
 import 'home_page.dart';
 import 'member_profile_page.dart';
+import 'settlement_ui.dart';
 import 'sync_queue_store.dart';
 import 'sync_service.dart';
 import 'sync_ui.dart';
@@ -81,7 +82,7 @@ final class MemberSyncedWorkspace extends StatelessWidget {
             body: TabBarView(
               children: [
                 _MemberExpenses(controller: controller, sync: sync),
-                _MemberBalances(controller: controller),
+                _MemberBalances(controller: controller, sync: sync),
                 _MemberMembers(controller: controller, sync: sync),
                 _MemberQueue(sync: sync),
               ],
@@ -267,8 +268,9 @@ final class _MemberExpenses extends StatelessWidget {
   }
 }
 final class _MemberBalances extends StatelessWidget {
-  const _MemberBalances({required this.controller});
+  const _MemberBalances({required this.controller, required this.sync});
   final TripController controller;
+  final MobileSyncController sync;
 
   @override
   Widget build(BuildContext context) {
@@ -305,9 +307,22 @@ final class _MemberBalances extends StatelessWidget {
             Card(
               child: ListTile(
                 title: Text('${controller.memberName(transfer.fromMemberId)} → ${controller.memberName(transfer.toMemberId)}'),
-                trailing: Text('${_money(transfer.amount.minorUnits)} ₫'),
+                trailing: transfer.fromMemberId == sync.memberId
+                    ? FilledButton.tonalIcon(
+                        onPressed: () => confirmAndRecordSettlement(
+                          context,
+                          controller: controller,
+                          sync: sync,
+                          transfer: transfer,
+                        ),
+                        icon: const Icon(Icons.check_rounded),
+                        label: const Text('Record paid'),
+                      )
+                    : Text('${_money(transfer.amount.minorUnits)} ₫'),
               ),
             ),
+        const SizedBox(height: 18),
+        SettlementHistorySection(controller: controller),
       ],
     );
   }

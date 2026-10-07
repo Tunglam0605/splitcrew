@@ -103,6 +103,47 @@ final class StoredPaymentAccount {
       );
 }
 
+final class StoredSettlementAcknowledgement {
+  const StoredSettlementAcknowledgement({
+    required this.id,
+    required this.fromMemberId,
+    required this.toMemberId,
+    required this.amountMinor,
+    required this.confirmedByMemberId,
+    this.createdAtMs = 0,
+    this.version = 0,
+  });
+
+  final String id;
+  final String fromMemberId;
+  final String toMemberId;
+  final int amountMinor;
+  final String confirmedByMemberId;
+  final int createdAtMs;
+  final int version;
+
+  Map<String, Object?> toJson() => {
+        'id': id,
+        'fromMemberId': fromMemberId,
+        'toMemberId': toMemberId,
+        'amountMinor': amountMinor,
+        'confirmedByMemberId': confirmedByMemberId,
+        'createdAtMs': createdAtMs,
+        'version': version,
+      };
+
+  factory StoredSettlementAcknowledgement.fromJson(Map<String, dynamic> json) =>
+      StoredSettlementAcknowledgement(
+        id: json['id'] as String,
+        fromMemberId: json['fromMemberId'] as String,
+        toMemberId: json['toMemberId'] as String,
+        amountMinor: json['amountMinor'] as int,
+        confirmedByMemberId: json['confirmedByMemberId'] as String,
+        createdAtMs: json['createdAtMs'] as int? ?? 0,
+        version: json['version'] as int? ?? 0,
+      );
+}
+
 final class StoredReceiptAsset {
   const StoredReceiptAsset({
     required this.id,
@@ -262,12 +303,14 @@ final class StoredTrip {
     required List<StoredMember> members,
     required List<StoredExpense> expenses,
     List<StoredPaymentAccount> paymentAccounts = const [],
+    List<StoredSettlementAcknowledgement> settlementAcknowledgements = const [],
     this.createdAtMs = 0,
     this.updatedAtMs = 0,
     this.version = 0,
   })  : members = List.unmodifiable(members),
         expenses = List.unmodifiable(expenses),
-        paymentAccounts = List.unmodifiable(paymentAccounts);
+        paymentAccounts = List.unmodifiable(paymentAccounts),
+        settlementAcknowledgements = List.unmodifiable(settlementAcknowledgements);
 
   final String id;
   final String name;
@@ -275,6 +318,7 @@ final class StoredTrip {
   final List<StoredMember> members;
   final List<StoredExpense> expenses;
   final List<StoredPaymentAccount> paymentAccounts;
+  final List<StoredSettlementAcknowledgement> settlementAcknowledgements;
   final int createdAtMs;
   final int updatedAtMs;
   final int version;
@@ -284,6 +328,7 @@ final class StoredTrip {
     List<StoredMember>? members,
     List<StoredExpense>? expenses,
     List<StoredPaymentAccount>? paymentAccounts,
+    List<StoredSettlementAcknowledgement>? settlementAcknowledgements,
     int? updatedAtMs,
     int? version,
   }) {
@@ -294,6 +339,7 @@ final class StoredTrip {
       members: members ?? this.members,
       expenses: expenses ?? this.expenses,
       paymentAccounts: paymentAccounts ?? this.paymentAccounts,
+      settlementAcknowledgements: settlementAcknowledgements ?? this.settlementAcknowledgements,
       createdAtMs: createdAtMs,
       updatedAtMs: updatedAtMs ?? this.updatedAtMs,
       version: version ?? this.version,
@@ -307,6 +353,7 @@ final class StoredTrip {
         'members': members.map((member) => member.toJson()).toList(),
         'expenses': expenses.map((expense) => expense.toJson()).toList(),
         'paymentAccounts': paymentAccounts.map((account) => account.toJson()).toList(),
+        'settlementAcknowledgements': settlementAcknowledgements.map((item) => item.toJson()).toList(),
         'createdAtMs': createdAtMs,
         'updatedAtMs': updatedAtMs,
         'version': version,
@@ -324,6 +371,9 @@ final class StoredTrip {
             .toList(),
         paymentAccounts: (json['paymentAccounts'] as List<dynamic>? ?? const [])
             .map((item) => StoredPaymentAccount.fromJson(Map<String, dynamic>.from(item as Map)))
+            .toList(),
+        settlementAcknowledgements: (json['settlementAcknowledgements'] as List<dynamic>? ?? const [])
+            .map((item) => StoredSettlementAcknowledgement.fromJson(Map<String, dynamic>.from(item as Map)))
             .toList(),
         createdAtMs: json['createdAtMs'] as int? ?? 0,
         updatedAtMs: json['updatedAtMs'] as int? ?? 0,
