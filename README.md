@@ -2,154 +2,76 @@
 
 **Offline-first group expense sharing for trips, friends, and everyday life.**
 
-SplitCrew is an Apache-2.0 open-source mobile app for recording shared expenses, splitting each bill fairly, and calculating who should pay whom. The architecture is intentionally local-first and can later add an owner-hosted local group mode without requiring a public cloud server.
+SplitCrew is an Apache-2.0 Flutter application for shared expenses. It works as a standalone local app and also supports an owner-hosted LAN group mode where one owner's phone is authoritative and nearby member phones keep cached replicas. A public cloud server is not required for same-network use.
 
-> **Status: v0.2.0-alpha local-hardening candidate — Android test APK is built by GitHub Actions.**
+> **Current development line: v0.10 alpha — encrypted owner recovery is being hardened on top of the tested v0.9 QR-join/realtime-sync baseline.**
 
-## What is testable now
+## What is implemented
 
-- Create, rename, and delete a local trip/crew.
-- Add and rename members without online accounts.
-- Safely remove members that are not referenced by financial records.
-- Add expenses with one or multiple payers.
-- Edit and delete expenses.
-- Expense detail/audit view showing payers and final integer allocations.
-- Equal split.
-- Exact amount per person.
-- Percentage split using integer basis points internally.
-- Share/weight split.
-- Deterministic per-item split in the core engine.
-- SQLite persistence on Android with a normalized schema.
-- One-time import of v0.1 SharedPreferences local data.
-- UUID identifiers, timestamps, and entity versions prepared for future sync.
-- Per-member paid/share/net explanation.
-- Deterministic settlement/debt simplification.
+- Deterministic integer money arithmetic; no floating-point balance calculations.
+- Equal, exact, percentage and share/weight splitting.
+- Multiple payers, deterministic balances and debt simplification.
+- SQLite persistence with UUIDs, timestamps and entity versions.
+- Trip/member/expense editing with financial-reference guards.
+- Camera/gallery receipt evidence stored in SplitCrew-managed local storage.
+- Safe payment-routing profiles and VietQR repayment QR generation.
+- In-app GitHub Releases version checks, SHA-256 APK verification and Android-authorized installation.
+- Owner-hosted LAN sessions with short-lived single-use invites.
+- QR invite rendering and member camera scanning.
+- REST-authoritative commands/snapshots with authenticated WebSocket revision notifications and polling fallback.
+- Durable offline mutation queue for member-created/edited/deleted expenses.
+- Idempotent operation IDs, optimistic revisions and explicit entity-version conflicts.
+- Secure local storage for member session credentials.
+- Encrypted backup/recovery foundation for canonical trip data and receipt evidence.
 
-See [`docs/testing/mvp-alpha.md`](docs/testing/mvp-alpha.md) for the alpha test plan.
-
-## Install the Android alpha
-
-The repository automatically builds a debug APK on `main`:
-
-1. Open **Actions**.
-2. Select the latest successful **MVP checks and Android build** run.
-3. Download the `splitcrew-android-debug` artifact.
-4. Extract and install `app-debug.apk` on an Android phone.
-
-The debug APK is for testing only and is not yet a signed public release.
-
-## Run locally
-
-Flutter's generated Android boilerplate is intentionally not maintained by hand in the repository. Generate it from the pinned project metadata first.
-
-### Linux/macOS
-
-```bash
-git clone https://github.com/Tunglam0605/splitcrew.git
-cd splitcrew
-./scripts/bootstrap_mobile.sh
-cd apps/mobile
-flutter run
-```
-
-### Windows PowerShell
-
-```powershell
-git clone https://github.com/Tunglam0605/splitcrew.git
-cd splitcrew
-./scripts/bootstrap_mobile.ps1
-cd apps/mobile
-flutter run
-```
+See ROADMAP.md for remaining production work.
 
 ## Architecture
 
-```text
-Flutter UI
-   │
-   ▼
-TripController / application state
-   │
-   ├───────────────┐
-   ▼               ▼
-Domain        Split Engine
-   │               │
-   └───────┬───────┘
-           ▼
-   Settlement Engine
-           │
-           ▼
-   TripRepository interface
-           │
-      ┌────┴────┐
-      ▼         ▼
-   SQLite     Memory test adapter
-      │
- future sync adapter
-      │
- Owner Host / Client
-```
+Presentation / Flutter UI → application controllers → deterministic domain/split/settlement core.
 
-### Dependency rules
+Persistence and synchronization remain adapters around that core: local SQLite, owner-host REST commands/snapshots, authenticated WebSocket revision notifications, durable offline queue, and encrypted backup/recovery.
 
-1. Domain logic is independent from Flutter, storage, and networking.
-2. Money is stored and calculated using integer minor units, never floating-point balances.
-3. Every expense conserves money: `sum(payers) == total == sum(allocations)`.
-4. Split and settlement results are deterministic for identical input.
-5. Local use must remain possible without Internet access.
-6. Persistent entities carry UUIDs, timestamps, and versions before multi-device synchronization is introduced.
-7. Owner-hosted synchronization is added only after the local financial core and database are stable.
+### Core invariants
 
-## Repository structure
+1. Domain logic does not depend on Flutter, SQLite, HTTP, WebSocket, camera or QR APIs.
+2. Monetary values use integer minor units.
+3. Every expense conserves money: sum(payers) == total == sum(allocations).
+4. Split and settlement outputs are deterministic for identical inputs.
+5. Local use remains available without Internet access.
+6. The owner's host is authoritative; cached member state never silently becomes canonical.
+7. Synchronized writes are idempotent and use explicit revision/version conflict handling.
+8. Receipt binaries are not embedded in normal canonical sync snapshots.
+9. Recovery import validates encryption, archive structure, receipt hashes and domain invariants before replacing local canonical state.
 
-```text
-splitcrew/
-├── apps/
-│   └── mobile/                  # Flutter Android-first app
-├── packages/
-│   ├── domain/                  # Money, trip, member, expense invariants
-│   ├── split_engine/            # Equal/exact/%/shares/per-item allocation
-│   └── settlement_engine/       # Balances and suggested transfers
-├── docs/
-│   ├── architecture/
-│   ├── database/
-│   ├── decisions/
-│   ├── product/
-│   ├── protocol/
-│   └── testing/
-├── scripts/                     # Android scaffold bootstrap
-└── .github/workflows/           # CI + Android APK artifact build
-```
+## Android alpha
 
-## Next milestones
+GitHub Actions builds a debug Android APK from tested branches and main. Open Actions, select the latest successful MVP checks and Android build run, then download the splitcrew-android-debug artifact.
 
-The next product slice is deliberately focused on evidence and repayment rather than networking:
+The debug APK is for testing. A signed public release is still a later milestone.
 
-1. Receipt image capture/attachment.
-2. Payment-account abstraction and VietQR.
-3. Shareable repayment QR and trip summary.
-4. Owner-hosted LAN mode with invite QR, roles, sync queue, versions, and conflict handling.
-5. OCR/item assignment after the core UX is stable.
+## Next production slices
 
-See [`ROADMAP.md`](ROADMAP.md) for details.
+1. Finish and validate encrypted owner backup/recovery on Android.
+2. Generalize the durable queue beyond expense CRUD.
+3. Add receipt-media synchronization without putting binary data in JSON snapshots.
+4. Add settlement acknowledgement history/sync.
+5. Run accessibility/privacy/migration acceptance before signed public beta.
+6. Add OCR/item assignment only after data recovery and sync surfaces are stable.
 
 ## Documentation
 
-- [`docs/architecture/system-overview.md`](docs/architecture/system-overview.md)
-- [`docs/architecture/local-host-sync.md`](docs/architecture/local-host-sync.md)
-- [`docs/database/schema.md`](docs/database/schema.md)
-- [`docs/protocol/sync-protocol.md`](docs/protocol/sync-protocol.md)
-- [`docs/product/v0.2.0-alpha-plan.md`](docs/product/v0.2.0-alpha-plan.md)
-- [`docs/testing/mvp-alpha.md`](docs/testing/mvp-alpha.md)
-
-## Contributing
-
-Contributions are welcome. Read [`CONTRIBUTING.md`](CONTRIBUTING.md) before opening a pull request.
+- docs/architecture/system-overview.md
+- docs/architecture/local-host-sync.md
+- docs/architecture/backup-recovery.md
+- docs/database/schema.md
+- docs/protocol/sync-protocol.md
+- docs/testing/mvp-alpha.md
 
 ## Security
 
-Do not post bank credentials, OTPs, private signing keys, or sensitive receipt data in public issues. See [`SECURITY.md`](SECURITY.md).
+Do not post bank credentials, OTPs, private signing keys, session tokens, backup passphrases or sensitive receipt data in public issues. See SECURITY.md.
 
 ## License
 
-Apache License 2.0 — see [`LICENSE`](LICENSE).
+Apache License 2.0 — see LICENSE.

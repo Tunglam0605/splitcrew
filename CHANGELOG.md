@@ -2,41 +2,59 @@
 
 All notable changes to SplitCrew are documented here.
 
-The project follows Semantic Versioning once public releases begin.
-
-## [Unreleased]
+## [Unreleased] — v0.10.0-alpha
 
 ### Added
 
-- SQLite local persistence with normalized trip/member/expense/payer/allocation tables.
-- Repository abstraction with an in-memory test adapter.
-- One-time migration from the v0.1 SharedPreferences payload.
-- UUID identifiers for newly created trips, members, and expenses.
-- Persisted timestamps and versions for mutable entities.
-- Rename/delete crew flows.
-- Rename/remove member flows with financial-reference safety checks.
-- Expense editing with domain money-conservation revalidation.
-- Expense detail/audit screen showing payers and final integer allocations.
-- Paid/share/net explanation in the balances screen.
-- Local regression tests for reload, editing, versions, member-removal safety, and settlement recalculation.
+- Encrypted portable owner backup/recovery for canonical trip data, payment-routing profiles and receipt evidence.
+- Argon2id passphrase key derivation and AES-GCM-256 authenticated encryption.
+- ZIP payload validation with bounded sizes, strict entry allow-listing and receipt SHA-256 verification.
+- Fresh-device restore UX and destructive-restore confirmation.
+- Staged receipt restore plus atomic canonical SQLite replacement.
+- Regression tests for encrypted round-trip, wrong passphrase, ciphertext tampering and canonical restore.
 
-### Changed
+### Safety
 
-- Mobile package version advanced to `0.2.0-alpha.1+2`.
-- SharedPreferences is no longer the primary local database and remains only as a v0.1 import source.
-- Expense list now opens an auditable detail view instead of exposing destructive actions as the primary interaction.
+- Restore is blocked while the phone is a member client or while Owner Host Session is running.
+- Backup passphrases are never persisted or recoverable by SplitCrew.
+- Stale pending operations are cleared after canonical recovery.
 
-### Existing foundation
+## v0.9.0-alpha
 
-- Pure Dart domain package with integer-minor-unit money invariants.
-- Deterministic split engine: equal, exact, percentage, shares, and per-item aggregation.
-- Settlement engine with net balances and deterministic suggested transfers.
-- Flutter Android-first MVP source.
-- Android debug APK build artifact through GitHub Actions.
-- Linux/macOS and Windows Android bootstrap scripts.
-- Open-source architecture, security and contribution documentation.
+### Added
 
-### Known limitations
+- Camera scanning for owner-host invite QR codes.
+- Manual invite paste remains available as a fallback.
+- Invite scans reuse the existing expiry, host identity and trip identity validation path.
 
-- Receipt capture, VietQR, signed releases, owner-hosted sync, and OCR are not yet implemented.
-- SQLite schema v1 is intentionally a minimal implemented subset of the broader target schema.
+## v0.8.0-alpha
+
+### Added
+
+- Authenticated WebSocket revision notifications for LAN member sessions.
+- REST event polling remains as a fallback with reconnect behavior.
+
+## v0.7.0-alpha
+
+### Added
+
+- Durable SQLite pending-operation queue.
+- Offline create/update/delete expense intents.
+- Secure member-session storage.
+- Idempotent retry and explicit conflict/blocked operation handling.
+
+## Earlier alpha foundation
+
+- Integer-minor-unit domain model and deterministic split/settlement engines.
+- SQLite local persistence and legacy preference migration.
+- Receipt capture, managed local evidence, payment profiles and VietQR repayment.
+- Owner-host LAN protocol, invite/session model and canonical snapshots.
+- GitHub Releases updater with semantic version comparison and SHA-256 APK verification.
+
+### Remaining major work
+
+- Signed public release pipeline and migration matrix.
+- Receipt media synchronization.
+- Settlement acknowledgement history/synchronization.
+- Accessibility/privacy acceptance.
+- OCR/item assignment.

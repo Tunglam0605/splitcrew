@@ -125,7 +125,11 @@ final class SplitCrewApp extends StatelessWidget {
                         tooltip: hasUpdate ? 'Update available' : 'Settings & updates',
                         onPressed: () => Navigator.of(context).push(
                           MaterialPageRoute<void>(
-                            builder: (_) => SettingsPage(updates: updates),
+                            builder: (_) => SettingsPage(
+                              updates: updates,
+                              controller: controller,
+                              sync: sync,
+                            ),
                           ),
                         ),
                         child: Icon(hasUpdate ? Icons.system_update_alt_rounded : Icons.settings_rounded),

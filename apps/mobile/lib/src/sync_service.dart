@@ -418,6 +418,13 @@ final class MobileSyncController extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> clearPendingOperationsForTrip(String tripId) async {
+    if (tripId.trim().isEmpty) return;
+    await _queueStore.clearForTrip(tripId);
+    await _reloadQueue();
+    notifyListeners();
+  }
+
   Future<SyncWriteDisposition> _deliverQueuedEntry(PendingSyncEntry original) async {
     final baseUri = _memberBaseUri;
     final token = _memberSessionToken;
