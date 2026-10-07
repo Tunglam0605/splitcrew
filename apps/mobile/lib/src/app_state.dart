@@ -207,6 +207,7 @@ final class TripController extends ChangeNotifier {
     required int totalMinor,
     required List<ExpensePayer> payers,
     required List<ExpenseAllocation> allocations,
+    String? createdByMemberId,
   }) async {
     final current = _requireTrip();
     final now = _nowMs();
@@ -217,6 +218,7 @@ final class TripController extends ChangeNotifier {
       totalMinor: totalMinor,
       payers: payers,
       allocations: allocations,
+      createdByMemberId: createdByMemberId,
       createdAtMs: now,
       updatedAtMs: now,
       version: 0,
@@ -242,6 +244,7 @@ final class TripController extends ChangeNotifier {
       totalMinor: totalMinor,
       payers: payers,
       allocations: allocations,
+      createdByMemberId: old.createdByMemberId,
       receipts: old.receipts,
       createdAtMs: old.createdAtMs,
       updatedAtMs: _nowMs(),
@@ -386,6 +389,7 @@ final class TripController extends ChangeNotifier {
     required int totalMinor,
     required List<ExpensePayer> payers,
     required List<ExpenseAllocation> allocations,
+    String? createdByMemberId,
     List<StoredReceiptAsset> receipts = const [],
     required int createdAtMs,
     required int updatedAtMs,
@@ -403,7 +407,10 @@ final class TripController extends ChangeNotifier {
     if (!memberIds.containsAll(referencedIds)) {
       throw ArgumentError('Expense references a member outside the trip.');
     }
-    final createdBy = payers.first.memberId;
+    final createdBy = createdByMemberId ?? current.members.firstWhere((member) => member.isOwner).id;
+    if (!memberIds.contains(createdBy)) {
+      throw ArgumentError('Expense creator must be a member of the trip.');
+    }
     final expense = Expense(
       id: id,
       tripId: current.id,

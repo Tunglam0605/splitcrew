@@ -187,4 +187,54 @@ void main() {
     expect(value.trip!.expenses.single.version, 1);
     expect(value.settlements.single.amount.minorUnits, 100000);
   });
+
+  test('local owner remains creator even when another member paid', () async {
+    final value = controller();
+    await value.load();
+    await value.createTrip(name: 'Trip', ownerName: 'Lam');
+    await value.addMember('Hoang');
+    final owner = value.trip!.members.first;
+    final member = value.trip!.members.last;
+    const total = Money(minorUnits: 80000, currencyCode: 'VND');
+
+    await value.addExpense(
+      title: 'Owner-entered taxi',
+      totalMinor: total.minorUnits,
+      payers: [ExpensePayer(memberId: member.id, amount: total)],
+      allocations: SplitEngine.equal(total: total, memberIds: [owner.id, member.id]),
+    );
+
+    expect(value.trip!.expenses.single.createdByMemberId, owner.id);
+  });
+  test('preserves explicit expense creator across edits', () async {
+    final value = controller();
+    await value.load();
+    await value.createTrip(name: 'Trip', ownerName: 'Lam');
+    await value.addMember('Hoang');
+    final owner = value.trip!.members.first;
+    final member = value.trip!.members.last;
+    const total = Money(minorUnits: 120000, currencyCode: 'VND');
+
+    await value.addExpense(
+      title: 'Member-created dinner',
+      totalMinor: total.minorUnits,
+      payers: [ExpensePayer(memberId: owner.id, amount: total)],
+      allocations: SplitEngine.equal(total: total, memberIds: [owner.id, member.id]),
+      createdByMemberId: member.id,
+    );
+
+    final created = value.trip!.expenses.single;
+    expect(created.createdByMemberId, member.id);
+
+    await value.updateExpense(
+      expenseId: created.id,
+      title: 'Edited dinner',
+      totalMinor: total.minorUnits,
+      payers: [ExpensePayer(memberId: member.id, amount: total)],
+      allocations: SplitEngine.equal(total: total, memberIds: [owner.id, member.id]),
+    );
+
+    expect(value.trip!.expenses.single.createdByMemberId, member.id);
+    expect(value.trip!.expenses.single.version, created.version + 1);
+  });
 }

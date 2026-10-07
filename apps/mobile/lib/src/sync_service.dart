@@ -3,8 +3,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:splitcrew_domain/splitcrew_domain.dart';
 import 'package:splitcrew_local_host/splitcrew_local_host.dart';
 import 'package:splitcrew_sync_protocol/splitcrew_sync_protocol.dart';
@@ -12,8 +12,11 @@ import 'package:uuid/uuid.dart';
 
 import 'app_state.dart';
 import 'local_store.dart';
+import 'sync_queue_store.dart';
 
 enum MobileSyncMode { local, host, member }
+
+enum SyncWriteDisposition { committed, queued }
 
 final class MobileSyncController extends ChangeNotifier {
   MobileSyncController._({
@@ -21,16 +24,22 @@ final class MobileSyncController extends ChangeNotifier {
     http.Client? client,
     Uuid? uuid,
     TripRepository? snapshotRepository,
+    PendingSyncQueueStore? queueStore,
+    FlutterSecureStorage? secureStorage,
   })  : _client = client ?? http.Client(),
         _uuid = uuid ?? const Uuid(),
-        _snapshotRepository = snapshotRepository ?? SqliteTripRepository();
+        _snapshotRepository = snapshotRepository ?? SqliteTripRepository(),
+        _queueStore = queueStore ?? SqlitePendingSyncQueueStore(),
+        _secureStorage = secureStorage ?? const FlutterSecureStorage();
 
-  static const _prefsKey = 'splitcrew.member-session.v1';
+  static const _sessionStorageKey = 'splitcrew.member-session.v2';
 
   final TripController tripController;
   final http.Client _client;
   final Uuid _uuid;
   final TripRepository _snapshotRepository;
+  final PendingSyncQueueStore _queueStore;
+  final FlutterSecureStorage _secureStorage;
 
   MobileSyncMode _mode = MobileSyncMode.local;
   LocalHostServer? _hostServer;
@@ -44,14 +53,17 @@ final class MobileSyncController extends ChangeNotifier {
   Timer? _pollTimer;
   bool _memberOnline = false;
   bool _busy = false;
+  bool _flushingQueue = false;
   String? _lastError;
   DateTime? _lastSyncAt;
+  List<PendingSyncEntry> _pending = const [];
 
   MobileSyncMode get mode => _mode;
   bool get isHostRunning => _hostServer?.isRunning ?? false;
   bool get isMemberSession => _mode == MobileSyncMode.member;
   bool get memberOnline => _memberOnline;
   bool get busy => _busy;
+  bool get flushingQueue => _flushingQueue;
   String? get lastError => _lastError;
   DateTime? get lastSyncAt => _lastSyncAt;
   String? get memberId => _memberId;
@@ -61,8 +73,18 @@ final class MobileSyncController extends ChangeNotifier {
   int? get hostPort => _hostServer?.port;
   String? get hostId => _hostServer?.hostId;
 
+  List<PendingSyncEntry> get pendingEntries {
+    final tripId = tripController.trip?.id;
+    if (tripId == null) return const [];
+    return List.unmodifiable(_pending.where((entry) => entry.operation.tripId == tripId));
+  }
+
+  int get pendingCount => pendingEntries.where((entry) => entry.state == PendingSyncState.queued).length;
+  int get blockedCount => pendingEntries.where((entry) => entry.state == PendingSyncState.blocked).length;
+
   static Future<MobileSyncController> bootstrap(TripController tripController) async {
     final controller = MobileSyncController._(tripController: tripController);
+    await controller._reloadQueue();
     await controller._restoreMemberSession();
     return controller;
   }
@@ -162,8 +184,10 @@ final class MobileSyncController extends ChangeNotifier {
       _lastError = null;
       _lastSyncAt = DateTime.now();
       await _persistMemberSession();
+      await _reloadQueue();
       _startPolling();
       notifyListeners();
+      unawaited(flushPendingQueue());
     } catch (error) {
       _lastError = 'Unable to join crew: $error';
       rethrow;
@@ -172,7 +196,11 @@ final class MobileSyncController extends ChangeNotifier {
     }
   }
 
-  Future<void> leaveMemberSession({bool keepCachedTrip = true}) async {
+  Future<void> leaveMemberSession({
+    bool keepCachedTrip = true,
+    bool clearPendingOperations = false,
+  }) async {
+    final tripId = tripController.trip?.id;
     _pollTimer?.cancel();
     _pollTimer = null;
     _memberBaseUri = null;
@@ -184,8 +212,11 @@ final class MobileSyncController extends ChangeNotifier {
     _lastSyncAt = null;
     _lastError = null;
     _mode = MobileSyncMode.local;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_prefsKey);
+    await _secureStorage.delete(key: _sessionStorageKey);
+    if (clearPendingOperations && tripId != null) {
+      await _queueStore.clearForTrip(tripId);
+      await _reloadQueue();
+    }
     if (!keepCachedTrip) await tripController.reset();
     notifyListeners();
   }
@@ -194,7 +225,7 @@ final class MobileSyncController extends ChangeNotifier {
     if (_mode != MobileSyncMode.member) return;
     final uri = _memberBaseUri;
     final token = _memberSessionToken;
-    if (uri == null || token == null) return;
+    if (uri == null || token == null) throw StateError('No active host session token.');
     try {
       final response = await _client
           .get(
@@ -223,21 +254,22 @@ final class MobileSyncController extends ChangeNotifier {
     }
   }
 
-  Future<void> createExpense({
+  Future<SyncWriteDisposition> createExpense({
     required String title,
     required int totalMinor,
     required List<ExpensePayer> payers,
     required List<ExpenseAllocation> allocations,
   }) async {
     if (_mode != MobileSyncMode.member) {
-      return tripController.addExpense(
+      await tripController.addExpense(
         title: title,
         totalMinor: totalMinor,
         payers: payers,
         allocations: allocations,
       );
+      return SyncWriteDisposition.committed;
     }
-    await _submitMemberOperation(
+    return _enqueueMemberOperation(
       SyncOperationType.createExpense,
       {
         'title': title,
@@ -248,42 +280,76 @@ final class MobileSyncController extends ChangeNotifier {
     );
   }
 
-  Future<void> updateExpense({
+  Future<SyncWriteDisposition> updateExpense({
     required String expenseId,
     required String title,
     required int totalMinor,
     required List<ExpensePayer> payers,
     required List<ExpenseAllocation> allocations,
   }) async {
-    if (_mode == MobileSyncMode.member) {
-      throw StateError(
-        'Synced expense editing is disabled in this validation slice. Create operations are enabled first for two-device testing.',
+    if (_mode != MobileSyncMode.member) {
+      await tripController.updateExpense(
+        expenseId: expenseId,
+        title: title,
+        totalMinor: totalMinor,
+        payers: payers,
+        allocations: allocations,
       );
+      return SyncWriteDisposition.committed;
     }
-    await tripController.updateExpense(
-      expenseId: expenseId,
-      title: title,
-      totalMinor: totalMinor,
-      payers: payers,
-      allocations: allocations,
+
+    final expense = tripController.expenseById(expenseId);
+    final actor = _memberId;
+    if (expense == null) throw ArgumentError('Expense not found.');
+    if (actor == null) throw StateError('No active member profile.');
+    if (expense.createdByMemberId != actor) {
+      throw StateError('Members may only edit expenses they created.');
+    }
+
+    return _enqueueMemberOperation(
+      SyncOperationType.updateExpense,
+      {
+        'expenseId': expenseId,
+        'expectedExpenseVersion': expense.version,
+        'title': title,
+        'totalMinor': totalMinor,
+        'payers': {for (final payer in payers) payer.memberId: payer.amount.minorUnits},
+        'allocations': {for (final allocation in allocations) allocation.memberId: allocation.amount.minorUnits},
+      },
     );
   }
 
-  Future<void> deleteExpense(String expenseId) async {
-    if (_mode == MobileSyncMode.member) {
-      throw StateError('Synced expense deletion is disabled in this validation slice.');
+  Future<SyncWriteDisposition> deleteExpense(String expenseId) async {
+    if (_mode != MobileSyncMode.member) {
+      await tripController.removeExpense(expenseId);
+      return SyncWriteDisposition.committed;
     }
-    await tripController.removeExpense(expenseId);
+
+    final expense = tripController.expenseById(expenseId);
+    final actor = _memberId;
+    if (expense == null) throw ArgumentError('Expense not found.');
+    if (actor == null) throw StateError('No active member profile.');
+    if (expense.createdByMemberId != actor) {
+      throw StateError('Members may only delete expenses they created.');
+    }
+
+    return _enqueueMemberOperation(
+      SyncOperationType.deleteExpense,
+      {
+        'expenseId': expenseId,
+        'expectedExpenseVersion': expense.version,
+      },
+    );
   }
 
-  Future<void> _submitMemberOperation(SyncOperationType type, Map<String, Object?> payload) async {
+  Future<SyncWriteDisposition> _enqueueMemberOperation(
+    SyncOperationType type,
+    Map<String, Object?> payload,
+  ) async {
     final trip = tripController.trip;
-    final baseUri = _memberBaseUri;
-    final token = _memberSessionToken;
     final actor = _memberId;
-    if (trip == null || baseUri == null || token == null || actor == null) {
-      throw StateError('No active member sync session.');
-    }
+    if (trip == null || actor == null) throw StateError('No active member profile.');
+
     final operation = SyncOperation(
       operationId: _uuid.v4(),
       tripId: trip.id,
@@ -293,8 +359,71 @@ final class MobileSyncController extends ChangeNotifier {
       payload: payload,
       createdAtEpochMs: DateTime.now().millisecondsSinceEpoch,
     );
+    final entry = PendingSyncEntry(
+      operation: operation,
+      state: PendingSyncState.queued,
+      attemptCount: 0,
+      updatedAtEpochMs: DateTime.now().millisecondsSinceEpoch,
+    );
+    await _queueStore.upsert(entry);
+    await _reloadQueue();
 
-    _setBusy(true);
+    if (!_memberOnline || _memberSessionToken == null || _memberBaseUri == null) {
+      _lastError = 'Operation queued. It will be sent when the owner host is reachable again.';
+      notifyListeners();
+      return SyncWriteDisposition.queued;
+    }
+    return _deliverQueuedEntry(entry);
+  }
+  Future<void> flushPendingQueue() async {
+    if (_flushingQueue || _mode != MobileSyncMode.member) return;
+    if (_memberBaseUri == null || _memberSessionToken == null || _memberId == null) return;
+    _flushingQueue = true;
+    notifyListeners();
+    try {
+      await _reloadQueue();
+      final tripId = tripController.trip?.id;
+      final actor = _memberId;
+      if (tripId == null || actor == null) return;
+      final queue = _pending
+          .where(
+            (entry) =>
+                entry.state == PendingSyncState.queued &&
+                entry.operation.tripId == tripId &&
+                entry.operation.actorMemberId == actor,
+          )
+          .toList();
+      for (final entry in queue) {
+        final disposition = await _deliverQueuedEntry(entry);
+        if (disposition == SyncWriteDisposition.queued && !_memberOnline) break;
+      }
+    } finally {
+      _flushingQueue = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> discardPendingOperation(String operationId) async {
+    await _queueStore.delete(operationId);
+    await _reloadQueue();
+    notifyListeners();
+  }
+
+  Future<SyncWriteDisposition> _deliverQueuedEntry(PendingSyncEntry original) async {
+    final baseUri = _memberBaseUri;
+    final token = _memberSessionToken;
+    if (baseUri == null || token == null) return SyncWriteDisposition.queued;
+
+    final existing = _pending.where((entry) => entry.operation.operationId == original.operation.operationId).firstOrNull;
+    final entry = (existing ?? original).copyWith(
+      attemptCount: (existing ?? original).attemptCount + 1,
+      updatedAtEpochMs: DateTime.now().millisecondsSinceEpoch,
+      clearLastError: true,
+      state: PendingSyncState.queued,
+    );
+    await _queueStore.upsert(entry);
+    await _reloadQueue();
+
     try {
       final response = await _client
           .post(
@@ -303,38 +432,149 @@ final class MobileSyncController extends ChangeNotifier {
               'authorization': 'Bearer $token',
               'content-type': 'application/json',
             },
-            body: jsonEncode(operation.toJson()),
+            body: jsonEncode(entry.operation.toJson()),
           )
           .timeout(const Duration(seconds: 8));
       final body = _decodeBody(response.body);
-      if (response.statusCode == 401) throw StateError('Host session expired. Ask for a new invite.');
-      if (response.statusCode == 403) throw StateError('This member is not allowed to perform that operation.');
+
+      if (response.statusCode == 401) {
+        await _keepQueued(entry, 'Host session expired. Rejoin using a new owner invite.');
+        _memberOnline = false;
+        return SyncWriteDisposition.queued;
+      }
+      if (response.statusCode == 403 || response.statusCode == 400) {
+        final message = body['message']?.toString() ?? body['error']?.toString() ?? 'Operation not permitted.';
+        await _blockEntry(entry, message);
+        throw StateError(message);
+      }
+      if (response.statusCode >= 500) {
+        await _keepQueued(entry, 'Owner host returned ${response.statusCode}. Retrying later.');
+        _memberOnline = false;
+        return SyncWriteDisposition.queued;
+      }
+
       final result = SyncOperationResult.fromJson(body);
       if (result.status == SyncResultStatus.conflict) {
         _canonicalRevision = result.canonicalTripRevision;
-        await refreshMemberSnapshot();
-        throw SyncConflictException(
-          result.message ?? 'The crew changed on the host. Review the refreshed data and retry.',
+
+        if (result.errorCode != 'STALE_REVISION') {
+          final message = result.message ?? result.errorCode ?? 'The owner rejected a stale entity version.';
+          await _blockEntry(entry, message);
+          return SyncWriteDisposition.queued;
+        }
+
+        final targetsExistingExpense = entry.operation.type == SyncOperationType.updateExpense ||
+            entry.operation.type == SyncOperationType.deleteExpense;
+        if (targetsExistingExpense) {
+          try {
+            await refreshMemberSnapshot();
+          } catch (_) {
+            await _keepQueued(
+              entry,
+              'Owner state changed. Waiting for a canonical refresh before retrying this edit/delete.',
+            );
+            return SyncWriteDisposition.queued;
+          }
+
+          final expenseId = entry.operation.payload['expenseId'] as String?;
+          final expectedVersion = entry.operation.payload['expectedExpenseVersion'] as int?;
+          final currentExpense = expenseId == null ? null : tripController.expenseById(expenseId);
+          if (currentExpense == null) {
+            await _blockEntry(entry, 'This expense no longer exists on the owner device.');
+            return SyncWriteDisposition.queued;
+          }
+          if (expectedVersion == null || currentExpense.version != expectedVersion) {
+            await _blockEntry(
+              entry,
+              'This expense changed on the owner device. Review the latest version before retrying.',
+            );
+            return SyncWriteDisposition.queued;
+          }
+        } else {
+          try {
+            await refreshMemberSnapshot();
+          } catch (_) {
+            // Create operations remain safe to rebase because the host revalidates the complete payload.
+          }
+        }
+
+        final rebased = PendingSyncEntry(
+          operation: SyncOperation(
+            operationId: _uuid.v4(),
+            tripId: entry.operation.tripId,
+            actorMemberId: entry.operation.actorMemberId,
+            expectedTripRevision: result.canonicalTripRevision,
+            type: entry.operation.type,
+            payload: entry.operation.payload,
+            createdAtEpochMs: DateTime.now().millisecondsSinceEpoch,
+          ),
+          state: PendingSyncState.queued,
+          attemptCount: 0,
+          updatedAtEpochMs: DateTime.now().millisecondsSinceEpoch,
+          lastError: 'Rebased after stale revision ${entry.operation.expectedTripRevision}.',
         );
+        await _queueStore.upsert(rebased);
+        await _queueStore.delete(entry.operation.operationId);
+        await _reloadQueue();
+        return SyncWriteDisposition.queued;
       }
       if (result.status == SyncResultStatus.rejected) {
-        throw StateError(result.message ?? result.errorCode ?? 'Host rejected the operation.');
+        final message = result.message ?? result.errorCode ?? 'Host rejected the operation.';
+        await _blockEntry(entry, message);
+        throw StateError(message);
       }
+
+      await _queueStore.delete(entry.operation.operationId);
       _canonicalRevision = result.canonicalTripRevision;
-      await refreshMemberSnapshot();
+      _memberOnline = true;
+      _lastError = null;
+      _lastSyncAt = DateTime.now();
+      await _reloadQueue();
+      try {
+        await refreshMemberSnapshot();
+      } catch (_) {
+        // Commit is already authoritative. The next poll will refresh the local cache.
+      }
+      notifyListeners();
+      return SyncWriteDisposition.committed;
     } on TimeoutException {
+      await _keepQueued(entry, 'Owner host did not respond. Retrying when the LAN session returns.');
       _memberOnline = false;
-      _lastError = 'Host did not respond. Keep both phones on the same network and retry.';
-      notifyListeners();
-      rethrow;
+      return SyncWriteDisposition.queued;
     } on SocketException catch (error) {
+      await _keepQueued(entry, 'Owner host is unreachable: $error');
       _memberOnline = false;
-      _lastError = 'Host is unreachable: $error';
-      notifyListeners();
+      return SyncWriteDisposition.queued;
+    } on FormatException catch (error) {
+      await _blockEntry(entry, 'Invalid host response: $error');
       rethrow;
     } finally {
-      _setBusy(false);
+      notifyListeners();
     }
+  }
+
+  Future<void> _keepQueued(PendingSyncEntry entry, String error) async {
+    _lastError = error;
+    await _queueStore.upsert(
+      entry.copyWith(
+        state: PendingSyncState.queued,
+        lastError: error,
+        updatedAtEpochMs: DateTime.now().millisecondsSinceEpoch,
+      ),
+    );
+    await _reloadQueue();
+  }
+
+  Future<void> _blockEntry(PendingSyncEntry entry, String error) async {
+    _lastError = error;
+    await _queueStore.upsert(
+      entry.copyWith(
+        state: PendingSyncState.blocked,
+        lastError: error,
+        updatedAtEpochMs: DateTime.now().millisecondsSinceEpoch,
+      ),
+    );
+    await _reloadQueue();
   }
 
   void _startPolling() {
@@ -345,7 +585,7 @@ final class MobileSyncController extends ChangeNotifier {
   }
 
   Future<void> _pollEvents() async {
-    if (_mode != MobileSyncMode.member || _busy) return;
+    if (_mode != MobileSyncMode.member || _busy || _flushingQueue) return;
     final baseUri = _memberBaseUri;
     final token = _memberSessionToken;
     if (baseUri == null || token == null) return;
@@ -354,7 +594,12 @@ final class MobileSyncController extends ChangeNotifier {
       final response = await _client
           .get(uri, headers: {'authorization': 'Bearer $token'})
           .timeout(const Duration(seconds: 5));
-      if (response.statusCode == 401) throw StateError('Host session expired.');
+      if (response.statusCode == 401) {
+        _memberOnline = false;
+        _lastError = 'Host session expired. Rejoin using a new owner invite.';
+        notifyListeners();
+        return;
+      }
       if (response.statusCode != 200) throw StateError('Event polling failed (${response.statusCode}).');
       final body = _decodeBody(response.body);
       final revision = body['canonicalTripRevision'] as int? ?? _canonicalRevision;
@@ -366,6 +611,7 @@ final class MobileSyncController extends ChangeNotifier {
         _lastSyncAt = DateTime.now();
         notifyListeners();
       }
+      if (pendingCount > 0) unawaited(flushPendingQueue());
     } catch (error) {
       _memberOnline = false;
       _lastError = '$error';
@@ -374,8 +620,7 @@ final class MobileSyncController extends ChangeNotifier {
   }
 
   Future<void> _restoreMemberSession() async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString(_prefsKey);
+    final raw = await _secureStorage.read(key: _sessionStorageKey);
     if (raw == null || !tripController.hasTrip) return;
     try {
       final json = Map<String, dynamic>.from(jsonDecode(raw) as Map);
@@ -385,8 +630,14 @@ final class MobileSyncController extends ChangeNotifier {
       _pinnedHostId = json['hostId'] as String;
       _canonicalRevision = json['revision'] as int? ?? tripController.trip!.version;
       _mode = MobileSyncMode.member;
-      await refreshMemberSnapshot();
       _startPolling();
+      try {
+        await refreshMemberSnapshot();
+        unawaited(flushPendingQueue());
+      } catch (_) {
+        _memberOnline = false;
+        // Keep member mode so cached canonical data and pending intents cannot be mistaken for owner-local state.
+      }
     } catch (error) {
       _memberOnline = false;
       _mode = MobileSyncMode.local;
@@ -400,10 +651,9 @@ final class MobileSyncController extends ChangeNotifier {
     final memberId = _memberId;
     final hostId = _pinnedHostId;
     if (baseUri == null || token == null || memberId == null || hostId == null) return;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(
-      _prefsKey,
-      jsonEncode({
+    await _secureStorage.write(
+      key: _sessionStorageKey,
+      value: jsonEncode({
         'baseUri': baseUri.toString(),
         'sessionToken': token,
         'memberId': memberId,
@@ -413,9 +663,13 @@ final class MobileSyncController extends ChangeNotifier {
     );
   }
 
+  Future<void> _reloadQueue() async {
+    _pending = await _queueStore.loadAll();
+    notifyListeners();
+  }
+
   Future<void> _replaceSnapshot(Map<String, Object?> snapshot) async {
     final stored = StoredTrip.fromJson(Map<String, dynamic>.from(snapshot));
-    await _snapshotRepository.deleteCurrent();
     await _snapshotRepository.save(stored);
     await tripController.load();
   }
@@ -472,15 +726,6 @@ final class MobileSyncController extends ChangeNotifier {
   }
 }
 
-final class SyncConflictException implements Exception {
-  const SyncConflictException(this.message);
-
-  final String message;
-
-  @override
-  String toString() => message;
-}
-
 final class _MobileTripHostBackend implements HostTripBackend {
   _MobileTripHostBackend(this.controller, {Uuid? uuid}) : _uuid = uuid ?? const Uuid();
 
@@ -500,6 +745,8 @@ final class _MobileTripHostBackend implements HostTripBackend {
     if (member == null) return false;
     if (member.isOwner) return true;
     return type == SyncOperationType.createExpense ||
+        type == SyncOperationType.updateExpense ||
+        type == SyncOperationType.deleteExpense ||
         type == SyncOperationType.renameMember ||
         type == SyncOperationType.updatePaymentAccount;
   }
@@ -568,6 +815,17 @@ final class _MobileTripHostBackend implements HostTripBackend {
           event: event,
         ),
       );
+    } on _EntityVersionConflict catch (error) {
+      return _remember(
+        operation.operationId,
+        SyncOperationResult(
+          operationId: operation.operationId,
+          status: SyncResultStatus.conflict,
+          canonicalTripRevision: revision,
+          errorCode: 'ENTITY_VERSION_CONFLICT',
+          message: error.message,
+        ),
+      );
     } on _ForbiddenOperation catch (error) {
       return _remember(
         operation.operationId,
@@ -607,19 +865,42 @@ final class _MobileTripHostBackend implements HostTripBackend {
           totalMinor: payload['totalMinor'] as int,
           payers: _payers(payload['payers'], trip.currencyCode),
           allocations: _allocations(payload['allocations'], trip.currencyCode),
+          createdByMemberId: actor.id,
         );
       case SyncOperationType.updateExpense:
-        if (!isOwner) throw const _ForbiddenOperation('Synced editing by members is not enabled yet.');
+        final expenseId = payload['expenseId'] as String;
+        final expense = controller.expenseById(expenseId);
+        if (expense == null) throw ArgumentError('Expense not found.');
+        if (!isOwner && expense.createdByMemberId != actor.id) {
+          throw const _ForbiddenOperation('Members may only edit expenses they created.');
+        }
+        final expectedVersion = payload['expectedExpenseVersion'] as int?;
+        if (expectedVersion == null || expectedVersion != expense.version) {
+          throw _EntityVersionConflict(
+            'Expense version changed from ${expectedVersion ?? 'unknown'} to ${expense.version}.',
+          );
+        }
         await controller.updateExpense(
-          expenseId: payload['expenseId'] as String,
+          expenseId: expenseId,
           title: payload['title'] as String,
           totalMinor: payload['totalMinor'] as int,
           payers: _payers(payload['payers'], trip.currencyCode),
           allocations: _allocations(payload['allocations'], trip.currencyCode),
         );
       case SyncOperationType.deleteExpense:
-        if (!isOwner) throw const _ForbiddenOperation('Synced deletion by members is not enabled yet.');
-        await controller.removeExpense(payload['expenseId'] as String);
+        final expenseId = payload['expenseId'] as String;
+        final expense = controller.expenseById(expenseId);
+        if (expense == null) throw ArgumentError('Expense not found.');
+        if (!isOwner && expense.createdByMemberId != actor.id) {
+          throw const _ForbiddenOperation('Members may only delete expenses they created.');
+        }
+        final expectedVersion = payload['expectedExpenseVersion'] as int?;
+        if (expectedVersion == null || expectedVersion != expense.version) {
+          throw _EntityVersionConflict(
+            'Expense version changed from ${expectedVersion ?? 'unknown'} to ${expense.version}.',
+          );
+        }
+        await controller.removeExpense(expenseId);
       case SyncOperationType.addMember:
         if (!isOwner) throw const _ForbiddenOperation('Only the owner can add members.');
         await controller.addMember(payload['name'] as String);
@@ -688,6 +969,11 @@ final class _MobileTripHostBackend implements HostTripBackend {
     if (raw is! Map) throw const FormatException('Expected an amount map.');
     return Map<String, dynamic>.from(raw).map((key, value) => MapEntry(key, value as int));
   }
+}
+
+final class _EntityVersionConflict implements Exception {
+  const _EntityVersionConflict(this.message);
+  final String message;
 }
 
 final class _ForbiddenOperation implements Exception {
