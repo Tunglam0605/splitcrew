@@ -47,9 +47,9 @@ When the host returns:
 
 ## Identity
 
-Joining a trip should use a one-time invitation token encoded in a QR code. After approval, the device receives/creates a persistent device identity associated with a `TripMember`.
+Joining a trip uses a short-lived, single-use invitation token encoded in a QR code. The owner displays the invite; the member can scan it with the camera or paste the same payload manually. The client verifies the invited host/trip identity before joining and pins the returned host identity for the saved member session.
 
-A `TripMember` is not the same object as a global online account. This allows members to exist without an Internet account.
+A `TripMember` is not the same object as a global online account. This allows members to exist and join over the local network without an Internet account.
 
 ## Concurrency
 
