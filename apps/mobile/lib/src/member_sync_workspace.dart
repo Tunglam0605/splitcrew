@@ -3,6 +3,7 @@ import 'package:splitcrew_domain/splitcrew_domain.dart';
 import 'package:splitcrew_split_engine/splitcrew_split_engine.dart';
 
 import 'app_state.dart';
+import 'home_page.dart';
 import 'sync_queue_store.dart';
 import 'sync_service.dart';
 import 'sync_ui.dart';
@@ -76,7 +77,23 @@ final class MemberSyncedWorkspace extends StatelessWidget {
                   ? null
                   : () => Navigator.of(context).push(
                         MaterialPageRoute<void>(
-                          builder: (_) => MemberAddExpensePage(controller: controller, sync: sync),
+                          builder: (_) => AddExpensePage(
+                            controller: controller,
+                            onSave: ({
+                              required StoredExpense? initialExpense,
+                              required String title,
+                              required int totalMinor,
+                              required List<ExpensePayer> payers,
+                              required List<ExpenseAllocation> allocations,
+                            }) async {
+                              await sync.createExpense(
+                                title: title,
+                                totalMinor: totalMinor,
+                                payers: payers,
+                                allocations: allocations,
+                              );
+                            },
+                          ),
                         ),
                       ),
               icon: Icon(sync.memberOnline ? Icons.add_rounded : Icons.add_to_queue_rounded),
@@ -93,6 +110,74 @@ final class _MemberExpenses extends StatelessWidget {
   const _MemberExpenses({required this.controller, required this.sync});
   final TripController controller;
   final MobileSyncController sync;
+
+  Future<void> _edit(BuildContext context, StoredExpense expense) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => AddExpensePage(
+          controller: controller,
+          initialExpense: expense,
+          onSave: ({
+            required StoredExpense? initialExpense,
+            required String title,
+            required int totalMinor,
+            required List<ExpensePayer> payers,
+            required List<ExpenseAllocation> allocations,
+          }) async {
+            final disposition = await sync.updateExpense(
+              expenseId: expense.id,
+              title: title,
+              totalMinor: totalMinor,
+              payers: payers,
+              allocations: allocations,
+            );
+            if (disposition == SyncWriteDisposition.queued && context.mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Edit saved to the pending queue.')),
+              );
+            }
+          },
+        ),
+      ),
+    );
+  }
+
+  Future<void> _delete(BuildContext context, StoredExpense expense) async {
+    final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('Delete expense?'),
+            content: const Text(
+              'The delete is sent through the sync queue. Canonical balances only change after the owner commits it.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('Delete'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!confirmed) return;
+
+    try {
+      final disposition = await sync.deleteExpense(expense.id);
+      if (context.mounted && disposition == SyncWriteDisposition.queued) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Delete saved to the pending queue.')),
+        );
+      }
+    } catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$error')));
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -124,15 +209,42 @@ final class _MemberExpenses extends StatelessWidget {
           )
         else
           for (final expense in expenses) ...[
-            Card(
-              child: ListTile(
-                leading: const CircleAvatar(child: Icon(Icons.receipt_long_rounded)),
-                title: Text(expense.title),
-                subtitle: Text(
-                  'Paid by ${expense.payerMinorByMember.keys.map(controller.memberName).join(', ')} · ${expense.allocationMinorByMember.length} participant(s)',
-                ),
-                trailing: Text('${_money(expense.totalMinor)} ₫'),
-              ),
+            Builder(
+              builder: (context) {
+                final canMutate = expense.createdByMemberId == sync.memberId;
+                return Card(
+                  child: ListTile(
+                    leading: const CircleAvatar(child: Icon(Icons.receipt_long_rounded)),
+                    title: Text(expense.title),
+                    subtitle: Text(
+                      'Paid by ${expense.payerMinorByMember.keys.map(controller.memberName).join(', ')} · '
+                      '${expense.allocationMinorByMember.length} participant(s) · '
+                      'created by ${controller.memberName(expense.createdByMemberId)}',
+                    ),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text('${_money(expense.totalMinor)} ₫'),
+                        if (canMutate)
+                          PopupMenuButton<String>(
+                            tooltip: 'Expense actions',
+                            onSelected: (value) async {
+                              if (value == 'edit') {
+                                await _edit(context, expense);
+                              } else if (value == 'delete') {
+                                await _delete(context, expense);
+                              }
+                            },
+                            itemBuilder: (_) => const [
+                              PopupMenuItem(value: 'edit', child: Text('Edit expense')),
+                              PopupMenuItem(value: 'delete', child: Text('Delete expense')),
+                            ],
+                          ),
+                      ],
+                    ),
+                  ),
+                );
+              },
             ),
             const SizedBox(height: 8),
           ],
@@ -140,7 +252,6 @@ final class _MemberExpenses extends StatelessWidget {
     );
   }
 }
-
 final class _MemberBalances extends StatelessWidget {
   const _MemberBalances({required this.controller});
   final TripController controller;
@@ -307,21 +418,6 @@ final class _PendingOperationCard extends StatelessWidget {
             Wrap(
               spacing: 8,
               children: [
-                if (blocked)
-                  FilledButton.tonal(
-                    onPressed: sync.memberOnline
-                        ? () async {
-                            try {
-                              await sync.retryPendingOperation(entry.operation.operationId);
-                            } catch (error) {
-                              if (context.mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$error')));
-                              }
-                            }
-                          }
-                        : null,
-                    child: const Text('Retry as new operation'),
-                  ),
                 TextButton(
                   onPressed: () async {
                     final confirmed = await showDialog<bool>(

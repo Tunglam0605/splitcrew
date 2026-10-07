@@ -269,21 +269,94 @@ final class MobileSyncController extends ChangeNotifier {
       );
       return SyncWriteDisposition.committed;
     }
-    final trip = tripController.trip;
-    final actor = _memberId;
-    if (trip == null || actor == null) throw StateError('No active member profile.');
-    final operation = SyncOperation(
-      operationId: _uuid.v4(),
-      tripId: trip.id,
-      actorMemberId: actor,
-      expectedTripRevision: _canonicalRevision,
-      type: SyncOperationType.createExpense,
-      payload: {
+    return _enqueueMemberOperation(
+      SyncOperationType.createExpense,
+      {
         'title': title,
         'totalMinor': totalMinor,
         'payers': {for (final payer in payers) payer.memberId: payer.amount.minorUnits},
         'allocations': {for (final allocation in allocations) allocation.memberId: allocation.amount.minorUnits},
       },
+    );
+  }
+
+  Future<SyncWriteDisposition> updateExpense({
+    required String expenseId,
+    required String title,
+    required int totalMinor,
+    required List<ExpensePayer> payers,
+    required List<ExpenseAllocation> allocations,
+  }) async {
+    if (_mode != MobileSyncMode.member) {
+      await tripController.updateExpense(
+        expenseId: expenseId,
+        title: title,
+        totalMinor: totalMinor,
+        payers: payers,
+        allocations: allocations,
+      );
+      return SyncWriteDisposition.committed;
+    }
+
+    final expense = tripController.expenseById(expenseId);
+    final actor = _memberId;
+    if (expense == null) throw ArgumentError('Expense not found.');
+    if (actor == null) throw StateError('No active member profile.');
+    if (expense.createdByMemberId != actor) {
+      throw StateError('Members may only edit expenses they created.');
+    }
+
+    return _enqueueMemberOperation(
+      SyncOperationType.updateExpense,
+      {
+        'expenseId': expenseId,
+        'expectedExpenseVersion': expense.version,
+        'title': title,
+        'totalMinor': totalMinor,
+        'payers': {for (final payer in payers) payer.memberId: payer.amount.minorUnits},
+        'allocations': {for (final allocation in allocations) allocation.memberId: allocation.amount.minorUnits},
+      },
+    );
+  }
+
+  Future<SyncWriteDisposition> deleteExpense(String expenseId) async {
+    if (_mode != MobileSyncMode.member) {
+      await tripController.removeExpense(expenseId);
+      return SyncWriteDisposition.committed;
+    }
+
+    final expense = tripController.expenseById(expenseId);
+    final actor = _memberId;
+    if (expense == null) throw ArgumentError('Expense not found.');
+    if (actor == null) throw StateError('No active member profile.');
+    if (expense.createdByMemberId != actor) {
+      throw StateError('Members may only delete expenses they created.');
+    }
+
+    return _enqueueMemberOperation(
+      SyncOperationType.deleteExpense,
+      {
+        'expenseId': expenseId,
+        'expectedExpenseVersion': expense.version,
+      },
+    );
+  }
+
+  Future<SyncWriteDisposition> _enqueueMemberOperation(
+    SyncOperationType type,
+    Map<String, Object?> payload,
+  ) async {
+    final trip = tripController.trip;
+    final actor = _memberId;
+    if (trip == null || actor == null) throw StateError('No active member profile.');
+
+    final operation = SyncOperation(
+      operationId: _uuid.v4(),
+      tripId: trip.id,
+      actorMemberId: actor,
+      expectedTripRevision: _canonicalRevision,
+      type: type,
+      payload: payload,
       createdAtEpochMs: DateTime.now().millisecondsSinceEpoch,
     );
     final entry = PendingSyncEntry(
@@ -296,41 +369,12 @@ final class MobileSyncController extends ChangeNotifier {
     await _reloadQueue();
 
     if (!_memberOnline || _memberSessionToken == null || _memberBaseUri == null) {
-      _lastError = 'Expense queued. It will be sent when the owner host is reachable again.';
+      _lastError = 'Operation queued. It will be sent when the owner host is reachable again.';
       notifyListeners();
       return SyncWriteDisposition.queued;
     }
     return _deliverQueuedEntry(entry);
   }
-
-  Future<void> updateExpense({
-    required String expenseId,
-    required String title,
-    required int totalMinor,
-    required List<ExpensePayer> payers,
-    required List<ExpenseAllocation> allocations,
-  }) async {
-    if (_mode == MobileSyncMode.member) {
-      throw StateError(
-        'Synced expense editing is disabled in this validation slice. Create operations are enabled first for two-device testing.',
-      );
-    }
-    await tripController.updateExpense(
-      expenseId: expenseId,
-      title: title,
-      totalMinor: totalMinor,
-      payers: payers,
-      allocations: allocations,
-    );
-  }
-
-  Future<void> deleteExpense(String expenseId) async {
-    if (_mode == MobileSyncMode.member) {
-      throw StateError('Synced expense deletion is disabled in this validation slice.');
-    }
-    await tripController.removeExpense(expenseId);
-  }
-
   Future<void> flushPendingQueue() async {
     if (_flushingQueue || _mode != MobileSyncMode.member) return;
     if (_memberBaseUri == null || _memberSessionToken == null || _memberId == null) return;
@@ -357,32 +401,6 @@ final class MobileSyncController extends ChangeNotifier {
       _flushingQueue = false;
       notifyListeners();
     }
-  }
-
-  Future<void> retryPendingOperation(String operationId) async {
-    final current = _pending.where((entry) => entry.operation.operationId == operationId).firstOrNull;
-    if (current == null) return;
-    final actor = _memberId;
-    final trip = tripController.trip;
-    if (actor == null || trip == null) throw StateError('Join the owner host before retrying.');
-    final replacement = PendingSyncEntry(
-      operation: SyncOperation(
-        operationId: _uuid.v4(),
-        tripId: trip.id,
-        actorMemberId: actor,
-        expectedTripRevision: _canonicalRevision,
-        type: current.operation.type,
-        payload: current.operation.payload,
-        createdAtEpochMs: DateTime.now().millisecondsSinceEpoch,
-      ),
-      state: PendingSyncState.queued,
-      attemptCount: 0,
-      updatedAtEpochMs: DateTime.now().millisecondsSinceEpoch,
-    );
-    await _queueStore.upsert(replacement);
-    await _queueStore.delete(operationId);
-    await _reloadQueue();
-    if (_memberOnline) await flushPendingQueue();
   }
 
   Future<void> discardPendingOperation(String operationId) async {
@@ -437,6 +455,49 @@ final class MobileSyncController extends ChangeNotifier {
 
       final result = SyncOperationResult.fromJson(body);
       if (result.status == SyncResultStatus.conflict) {
+        _canonicalRevision = result.canonicalTripRevision;
+
+        if (result.errorCode != 'STALE_REVISION') {
+          final message = result.message ?? result.errorCode ?? 'The owner rejected a stale entity version.';
+          await _blockEntry(entry, message);
+          return SyncWriteDisposition.queued;
+        }
+
+        final targetsExistingExpense = entry.operation.type == SyncOperationType.updateExpense ||
+            entry.operation.type == SyncOperationType.deleteExpense;
+        if (targetsExistingExpense) {
+          try {
+            await refreshMemberSnapshot();
+          } catch (_) {
+            await _keepQueued(
+              entry,
+              'Owner state changed. Waiting for a canonical refresh before retrying this edit/delete.',
+            );
+            return SyncWriteDisposition.queued;
+          }
+
+          final expenseId = entry.operation.payload['expenseId'] as String?;
+          final expectedVersion = entry.operation.payload['expectedExpenseVersion'] as int?;
+          final currentExpense = expenseId == null ? null : tripController.expenseById(expenseId);
+          if (currentExpense == null) {
+            await _blockEntry(entry, 'This expense no longer exists on the owner device.');
+            return SyncWriteDisposition.queued;
+          }
+          if (expectedVersion == null || currentExpense.version != expectedVersion) {
+            await _blockEntry(
+              entry,
+              'This expense changed on the owner device. Review the latest version before retrying.',
+            );
+            return SyncWriteDisposition.queued;
+          }
+        } else {
+          try {
+            await refreshMemberSnapshot();
+          } catch (_) {
+            // Create operations remain safe to rebase because the host revalidates the complete payload.
+          }
+        }
+
         final rebased = PendingSyncEntry(
           operation: SyncOperation(
             operationId: _uuid.v4(),
@@ -454,13 +515,7 @@ final class MobileSyncController extends ChangeNotifier {
         );
         await _queueStore.upsert(rebased);
         await _queueStore.delete(entry.operation.operationId);
-        _canonicalRevision = result.canonicalTripRevision;
         await _reloadQueue();
-        try {
-          await refreshMemberSnapshot();
-        } catch (_) {
-          // The rebased intent remains durable even if the snapshot refresh loses connectivity.
-        }
         return SyncWriteDisposition.queued;
       }
       if (result.status == SyncResultStatus.rejected) {
@@ -690,6 +745,8 @@ final class _MobileTripHostBackend implements HostTripBackend {
     if (member == null) return false;
     if (member.isOwner) return true;
     return type == SyncOperationType.createExpense ||
+        type == SyncOperationType.updateExpense ||
+        type == SyncOperationType.deleteExpense ||
         type == SyncOperationType.renameMember ||
         type == SyncOperationType.updatePaymentAccount;
   }
@@ -758,6 +815,17 @@ final class _MobileTripHostBackend implements HostTripBackend {
           event: event,
         ),
       );
+    } on _EntityVersionConflict catch (error) {
+      return _remember(
+        operation.operationId,
+        SyncOperationResult(
+          operationId: operation.operationId,
+          status: SyncResultStatus.conflict,
+          canonicalTripRevision: revision,
+          errorCode: 'ENTITY_VERSION_CONFLICT',
+          message: error.message,
+        ),
+      );
     } on _ForbiddenOperation catch (error) {
       return _remember(
         operation.operationId,
@@ -797,19 +865,42 @@ final class _MobileTripHostBackend implements HostTripBackend {
           totalMinor: payload['totalMinor'] as int,
           payers: _payers(payload['payers'], trip.currencyCode),
           allocations: _allocations(payload['allocations'], trip.currencyCode),
+          createdByMemberId: actor.id,
         );
       case SyncOperationType.updateExpense:
-        if (!isOwner) throw const _ForbiddenOperation('Synced editing by members is not enabled yet.');
+        final expenseId = payload['expenseId'] as String;
+        final expense = controller.expenseById(expenseId);
+        if (expense == null) throw ArgumentError('Expense not found.');
+        if (!isOwner && expense.createdByMemberId != actor.id) {
+          throw const _ForbiddenOperation('Members may only edit expenses they created.');
+        }
+        final expectedVersion = payload['expectedExpenseVersion'] as int?;
+        if (expectedVersion == null || expectedVersion != expense.version) {
+          throw _EntityVersionConflict(
+            'Expense version changed from ${expectedVersion ?? 'unknown'} to ${expense.version}.',
+          );
+        }
         await controller.updateExpense(
-          expenseId: payload['expenseId'] as String,
+          expenseId: expenseId,
           title: payload['title'] as String,
           totalMinor: payload['totalMinor'] as int,
           payers: _payers(payload['payers'], trip.currencyCode),
           allocations: _allocations(payload['allocations'], trip.currencyCode),
         );
       case SyncOperationType.deleteExpense:
-        if (!isOwner) throw const _ForbiddenOperation('Synced deletion by members is not enabled yet.');
-        await controller.removeExpense(payload['expenseId'] as String);
+        final expenseId = payload['expenseId'] as String;
+        final expense = controller.expenseById(expenseId);
+        if (expense == null) throw ArgumentError('Expense not found.');
+        if (!isOwner && expense.createdByMemberId != actor.id) {
+          throw const _ForbiddenOperation('Members may only delete expenses they created.');
+        }
+        final expectedVersion = payload['expectedExpenseVersion'] as int?;
+        if (expectedVersion == null || expectedVersion != expense.version) {
+          throw _EntityVersionConflict(
+            'Expense version changed from ${expectedVersion ?? 'unknown'} to ${expense.version}.',
+          );
+        }
+        await controller.removeExpense(expenseId);
       case SyncOperationType.addMember:
         if (!isOwner) throw const _ForbiddenOperation('Only the owner can add members.');
         await controller.addMember(payload['name'] as String);
@@ -878,6 +969,11 @@ final class _MobileTripHostBackend implements HostTripBackend {
     if (raw is! Map) throw const FormatException('Expected an amount map.');
     return Map<String, dynamic>.from(raw).map((key, value) => MapEntry(key, value as int));
   }
+}
+
+final class _EntityVersionConflict implements Exception {
+  const _EntityVersionConflict(this.message);
+  final String message;
 }
 
 final class _ForbiddenOperation implements Exception {

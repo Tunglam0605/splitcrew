@@ -6,6 +6,14 @@ import 'app_state.dart';
 
 enum ExpenseSplitMode { equal, exact, percentage, shares }
 
+typedef ExpenseSaveHandler = Future<void> Function({
+  required StoredExpense? initialExpense,
+  required String title,
+  required int totalMinor,
+  required List<ExpensePayer> payers,
+  required List<ExpenseAllocation> allocations,
+});
+
 final class CreateTripPage extends StatefulWidget {
   const CreateTripPage({super.key, required this.controller, this.loadError});
 
@@ -481,10 +489,16 @@ final class ExpenseDetailPage extends StatelessWidget {
 }
 
 final class AddExpensePage extends StatefulWidget {
-  const AddExpensePage({super.key, required this.controller, this.initialExpense});
+  const AddExpensePage({
+    super.key,
+    required this.controller,
+    this.initialExpense,
+    this.onSave,
+  });
 
   final TripController controller;
   final StoredExpense? initialExpense;
+  final ExpenseSaveHandler? onSave;
 
   bool get isEditing => initialExpense != null;
 
@@ -602,7 +616,16 @@ final class _AddExpensePageState extends State<AddExpensePage> {
           ),
       };
 
-      if (widget.initialExpense == null) {
+      final saveHandler = widget.onSave;
+      if (saveHandler != null) {
+        await saveHandler(
+          initialExpense: widget.initialExpense,
+          title: _titleController.text,
+          totalMinor: totalMinor,
+          payers: payers,
+          allocations: allocations,
+        );
+      } else if (widget.initialExpense == null) {
         await widget.controller.addExpense(
           title: _titleController.text,
           totalMinor: totalMinor,
