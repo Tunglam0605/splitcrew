@@ -2,64 +2,112 @@
 
 ## Purpose
 
-Define stable synchronization semantics independently from REST, WebSocket or future cloud transports.
+Define owner-authoritative synchronization semantics independently from REST, WebSocket, Wi-Fi transport, or any future relay.
 
-## Command envelope
+## Operation envelope
+
+The implemented protocol uses `SyncOperation`:
 
 ```text
-command_id
-trip_id
-device_id
-member_id
-client_sequence
-command_type
-entity_id
-expected_version
+protocolVersion
+operationId
+tripId
+actorMemberId
+expectedTripRevision
+type
 payload
-created_at
+createdAtEpochMs
 ```
 
-## Initial command types
+`operationId` is globally unique and is the idempotency key. `expectedTripRevision` protects canonical ordering.
 
-- `CREATE_EXPENSE`
-- `UPDATE_EXPENSE`
-- `DELETE_EXPENSE`
-- `ADD_MEMBER`
-- `UPDATE_MEMBER`
-- `REMOVE_MEMBER`
-- `MARK_SETTLEMENT_SENT`
-- `CONFIRM_SETTLEMENT`
+## Implemented operation types
+
+- `createExpense`
+- `updateExpense`
+- `deleteExpense`
+- `addMember`
+- `renameMember`
+- `updatePaymentAccount`
+- `markSettlement`
+
+### Entity-level optimistic concurrency
+
+Trip revision and entity version solve different problems.
+
+- `updateExpense` / `deleteExpense` carry `expectedExpenseVersion`.
+- `renameMember` carries `expectedMemberVersion`.
+- `updatePaymentAccount` carries nullable `expectedPaymentAccountVersion`; `null` explicitly means “no owner-side account is expected yet”.
+- `markSettlement` is validated semantically against the current owner-side settlement suggestion after any trip-revision rebase.
+
+A stale trip revision may be rebased, but the operation payload keeps its entity expectation. The host must not silently overwrite a stale entity.
 
 ## Host result
 
-A host response is one of:
+`SyncOperationResult.status` is one of:
 
-- `ACCEPTED`
-- `REJECTED_VALIDATION`
-- `REJECTED_PERMISSION`
-- `VERSION_CONFLICT`
-- `DUPLICATE_COMMAND`
+- `accepted`
+- `duplicate`
+- `conflict`
+- `rejected`
 
-Accepted commands produce canonical events containing the new entity version and trip revision.
+Common error codes include:
+
+- `STALE_REVISION`
+- `ENTITY_VERSION_CONFLICT`
+- `OPERATION_FORBIDDEN`
+- `OPERATION_INVALID`
+- `TRIP_MISMATCH`
+
+Accepted operations produce a `CommittedSyncEvent` containing the resulting canonical trip revision.
 
 ## Idempotency
 
-`command_id` is globally unique. Re-sending a command after a network interruption must not apply it twice.
+If the owner host receives the same `operationId` again, it returns `duplicate` and does not reapply the mutation.
 
-## Ordering
+This is especially important for payment acknowledgements: retrying a network request must never clear a debt twice.
 
-Each client keeps a monotonic `client_sequence`. The host keeps a monotonic per-trip `revision`. Client sequence protects operation ordering; trip revision supports catch-up synchronization.
+## Offline queue and reconnect
 
-## Snapshot/catch-up
+A member device never promotes its cached replica to canonical state.
 
-Client reconnect flow:
+When the owner host is unavailable:
 
-1. send `last_known_trip_revision`;
-2. host returns missing canonical events when history is available;
-3. otherwise host returns a current snapshot;
-4. client reconciles local replica;
-5. client submits pending commands.
+1. an allowed mutation is serialized to the durable SQLite pending queue;
+2. the cached canonical trip remains unchanged;
+3. the UI reports the mutation as queued.
 
-## Conflict rule
+When the host is reachable again:
 
-Financial entities use optimistic concurrency. Update/delete commands must carry `expected_version`. A mismatch is reported as `VERSION_CONFLICT`; the host must not silently overwrite canonical state.
+1. the client refreshes or receives a revision notification;
+2. queued operations are submitted in order;
+3. `STALE_REVISION` causes a canonical refresh/rebase;
+4. entity expectations remain unchanged;
+5. an entity conflict becomes a blocked operation requiring user review;
+6. an accepted commit removes the queue entry and refreshes the canonical replica.
+
+## Settlement acknowledgement semantics
+
+A non-owner member may submit `markSettlement` only for their own outgoing transfer. The owner may record any current suggested transfer.
+
+The owner host revalidates the exact:
+
+```text
+fromMemberId
+toMemberId
+amountMinor
+```
+
+against the current deterministic settlement result before committing an append-only acknowledgement. If the debt changed or was already acknowledged, the host returns an entity conflict.
+
+## Transport
+
+Current LAN mode uses:
+
+- REST for join, snapshots and authoritative operations;
+- authenticated WebSocket messages as revision notifications only;
+- REST polling as fallback/reconnect support;
+- the same member session token for REST/WebSocket authentication;
+- invite-pinned host/trip identity.
+
+Notification transport never becomes a second source of truth.

@@ -142,6 +142,10 @@ jobs:
         working-directory: apps/mobile
         timeout-minutes: 2
         run: flutter test test/member_profile_sync_test.dart test/member_profile_page_test.dart --reporter expanded
+      - name: Test settlement ledger and migration
+        working-directory: apps/mobile
+        timeout-minutes: 3
+        run: flutter test test/settlement_ack_test.dart test/local_store_migration_test.dart test/settlement_ui_test.dart test/backup_codec_test.dart test/backup_service_test.dart --reporter expanded
       - name: Test mobile app
         working-directory: apps/mobile
         timeout-minutes: 5

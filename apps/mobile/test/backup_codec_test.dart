@@ -59,6 +59,16 @@ void main() {
       currencyCode: 'VND',
       members: [owner, member],
       expenses: [expense],
+      settlementAcknowledgements: const [
+        StoredSettlementAcknowledgement(
+          id: 'settlement-1',
+          fromMemberId: 'member-1',
+          toMemberId: 'owner-1',
+          amountMinor: 50000,
+          confirmedByMemberId: 'member-1',
+          createdAtMs: 13,
+        ),
+      ],
       createdAtMs: 10,
       updatedAtMs: 12,
       version: 3,
@@ -86,6 +96,8 @@ void main() {
     expect(decoded.trip.id, trip.id);
     expect(decoded.trip.name, trip.name);
     expect(decoded.trip.expenses.single.title, 'Secret dinner');
+    expect(decoded.trip.settlementAcknowledgements, hasLength(1));
+    expect(decoded.trip.settlementAcknowledgements.single.amountMinor, 50000);
     expect(
       decoded.trip.expenses.single.receipts.single.localPath,
       'receipts/expense-1/receipt-1.bin',

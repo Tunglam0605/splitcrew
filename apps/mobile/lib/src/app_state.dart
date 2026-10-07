@@ -131,6 +131,15 @@ final class TripController extends ChangeNotifier {
     if (referenced) {
       throw ArgumentError('This member is referenced by existing expenses. Edit or remove those expenses first.');
     }
+    final settlementReferenced = current.settlementAcknowledgements.any(
+      (item) =>
+          item.fromMemberId == memberId ||
+          item.toMemberId == memberId ||
+          item.confirmedByMemberId == memberId,
+    );
+    if (settlementReferenced) {
+      throw ArgumentError('This member is referenced by settlement history and cannot be removed.');
+    }
     _trip = _touchTrip(
       current,
       members: current.members.where((item) => item.id != memberId).toList(),
@@ -329,6 +338,51 @@ final class TripController extends ChangeNotifier {
     }
   }
 
+  Future<void> acknowledgeSettlement({
+    required String fromMemberId,
+    required String toMemberId,
+    required int amountMinor,
+    required String confirmedByMemberId,
+  }) async {
+    final current = _requireTrip();
+    if (amountMinor <= 0) throw ArgumentError('Settlement amount must be greater than zero.');
+    if (fromMemberId == toMemberId) throw ArgumentError('Settlement members must be different.');
+    final memberIds = current.members.map((member) => member.id).toSet();
+    if (!memberIds.contains(fromMemberId) ||
+        !memberIds.contains(toMemberId) ||
+        !memberIds.contains(confirmedByMemberId)) {
+      throw ArgumentError('Settlement references an unknown member.');
+    }
+    final confirmer = current.members.where((member) => member.id == confirmedByMemberId).first;
+    if (!confirmer.isOwner && confirmedByMemberId != fromMemberId) {
+      throw StateError('Members may only record their own outgoing settlement.');
+    }
+    final stillSuggested = settlements.any(
+      (transfer) =>
+          transfer.fromMemberId == fromMemberId &&
+          transfer.toMemberId == toMemberId &&
+          transfer.amount.minorUnits == amountMinor,
+    );
+    if (!stillSuggested) {
+      throw StateError('This settlement suggestion is no longer current. Refresh before recording payment.');
+    }
+    final now = _nowMs();
+    final acknowledgement = StoredSettlementAcknowledgement(
+      id: _uuid.v4(),
+      fromMemberId: fromMemberId,
+      toMemberId: toMemberId,
+      amountMinor: amountMinor,
+      confirmedByMemberId: confirmedByMemberId,
+      createdAtMs: now,
+      version: current.settlementAcknowledgements.length,
+    );
+    _trip = _touchTrip(
+      current,
+      settlementAcknowledgements: [...current.settlementAcknowledgements, acknowledgement],
+    );
+    await _persistAndNotify();
+  }
+
   Future<void> replaceFromBackup(StoredTrip restored) async {
     _validateStoredTrip(restored);
     await _repository.save(restored);
@@ -364,11 +418,33 @@ final class TripController extends ChangeNotifier {
   List<MemberBalance> get balances {
     final current = _trip;
     if (current == null) return const [];
-    return SettlementEngine.calculateBalances(
+    final base = SettlementEngine.calculateBalances(
       expenses: domainExpenses,
       memberIds: current.members.map((member) => member.id),
       currencyCode: current.currencyCode,
     );
+    final units = <String, int>{
+      for (final balance in base) balance.memberId: balance.balance.minorUnits,
+    };
+    for (final acknowledgement in current.settlementAcknowledgements) {
+      units.update(
+        acknowledgement.fromMemberId,
+        (value) => value + acknowledgement.amountMinor,
+      );
+      units.update(
+        acknowledgement.toMemberId,
+        (value) => value - acknowledgement.amountMinor,
+      );
+    }
+    final total = units.values.fold<int>(0, (sum, value) => sum + value);
+    if (total != 0) throw StateError('Settlement acknowledgement conservation failed: $total.');
+    return List.unmodifiable([
+      for (final memberId in (units.keys.toList()..sort()))
+        MemberBalance(
+          memberId: memberId,
+          balance: Money(minorUnits: units[memberId]!, currencyCode: current.currencyCode),
+        ),
+    ]);
   }
 
   List<SettlementTransfer> get settlements => SettlementEngine.settleBalances(balances);
@@ -451,12 +527,14 @@ final class TripController extends ChangeNotifier {
     List<StoredMember>? members,
     List<StoredExpense>? expenses,
     List<StoredPaymentAccount>? paymentAccounts,
+    List<StoredSettlementAcknowledgement>? settlementAcknowledgements,
   }) =>
       current.copyWith(
         name: name,
         members: members,
         expenses: expenses,
         paymentAccounts: paymentAccounts,
+        settlementAcknowledgements: settlementAcknowledgements,
         updatedAtMs: _nowMs(),
         version: current.version + 1,
       );
@@ -495,6 +573,21 @@ final class TripController extends ChangeNotifier {
         throw const FormatException('A member may only have one active payment account in this MVP.');
       }
     }
+    final acknowledgementIds = <String>{};
+    for (final acknowledgement in trip.settlementAcknowledgements) {
+      if (!acknowledgementIds.add(acknowledgement.id)) {
+        throw const FormatException('Duplicate settlement acknowledgement identifier.');
+      }
+      if (acknowledgement.id.trim().isEmpty ||
+          acknowledgement.amountMinor <= 0 ||
+          acknowledgement.fromMemberId == acknowledgement.toMemberId ||
+          !ids.contains(acknowledgement.fromMemberId) ||
+          !ids.contains(acknowledgement.toMemberId) ||
+          !ids.contains(acknowledgement.confirmedByMemberId) ||
+          acknowledgement.version < 0) {
+        throw const FormatException('Invalid settlement acknowledgement metadata.');
+      }
+    }
     final receiptIds = <String>{};
     for (final expense in trip.expenses) {
       expense.toDomain(tripId: trip.id, currencyCode: trip.currencyCode);
@@ -506,6 +599,18 @@ final class TripController extends ChangeNotifier {
           throw const FormatException('Invalid receipt metadata.');
         }
         if (!receiptIds.add(receipt.id)) throw const FormatException('Duplicate receipt identifier.');
+      }
+    }
+    // Historical payments are validated structurally, not replayed against the final expense graph.
+    // A later expense can legitimately change today's suggested transfers without invalidating an earlier payment.
+    for (var index = 0; index < trip.settlementAcknowledgements.length; index++) {
+      final acknowledgement = trip.settlementAcknowledgements[index];
+      if (acknowledgement.version != index) {
+        throw const FormatException('Settlement acknowledgement sequence is invalid.');
+      }
+      final confirmer = trip.members.where((member) => member.id == acknowledgement.confirmedByMemberId).first;
+      if (!confirmer.isOwner && acknowledgement.confirmedByMemberId != acknowledgement.fromMemberId) {
+        throw const FormatException('Settlement acknowledgement confirmer is not authorized.');
       }
     }
   }

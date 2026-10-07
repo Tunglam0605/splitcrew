@@ -1,21 +1,23 @@
 # Local Database Schema
 
-SplitCrew keeps the financial core independent from persistence. SQLite is the physical local store for the Android MVP; future schema upgrades must use explicit database-version migrations.
+SplitCrew keeps deterministic financial logic independent from persistence. SQLite is the Android canonical local store; every schema change uses an explicit versioned migration.
 
-## Implemented SQLite schema v1
+## Current canonical schema: v4
 
-### `trips`
+### v1 — Core trip ledger
 
-- `id` UUID/text primary key
+#### `trips`
+
+- `id` TEXT primary key
 - `name`
 - `currency_code`
 - `created_at_ms`
 - `updated_at_ms`
 - `version`
 
-### `members`
+#### `members`
 
-- `id` UUID/text primary key
+- `id` TEXT primary key
 - `trip_id` foreign key
 - `name`
 - `is_owner`
@@ -23,9 +25,9 @@ SplitCrew keeps the financial core independent from persistence. SQLite is the p
 - `updated_at_ms`
 - `version`
 
-### `expenses`
+#### `expenses`
 
-- `id` UUID/text primary key
+- `id` TEXT primary key
 - `trip_id` foreign key
 - `title`
 - `total_minor` integer
@@ -34,7 +36,7 @@ SplitCrew keeps the financial core independent from persistence. SQLite is the p
 - `updated_at_ms`
 - `version`
 
-### `expense_payers`
+#### `expense_payers`
 
 - `expense_id`
 - `member_id`
@@ -42,7 +44,7 @@ SplitCrew keeps the financial core independent from persistence. SQLite is the p
 
 Primary key: `(expense_id, member_id)`.
 
-### `expense_allocations`
+#### `expense_allocations`
 
 - `expense_id`
 - `member_id`
@@ -50,7 +52,7 @@ Primary key: `(expense_id, member_id)`.
 
 Primary key: `(expense_id, member_id)`.
 
-The controller/domain boundary validates both money-conservation constraints before data is committed:
+The controller/domain boundary enforces:
 
 ```text
 sum(expense_payers.amount_minor)
@@ -60,81 +62,90 @@ sum(expense_payers.amount_minor)
 sum(expense_allocations.amount_minor)
 ```
 
-## Migration from v0.1 alpha
+### v2 — Payment routing
 
-If SQLite contains no current trip, the application checks the legacy `splitcrew.trip.v1` SharedPreferences payload once. A valid payload is normalized with timestamps, validated through the current domain invariants, written to SQLite, and then removed from SharedPreferences.
+#### `payment_accounts`
 
-SharedPreferences is not used for ongoing financial persistence after this import.
-
-## Planned schema extensions
-
-The logical target remains broader than SQLite v1. Later migrations may add:
-
-### `expense_items`
-
-- `id` UUID primary key
-- `expense_id`
-- `name`
-- `quantity`
-- `amount_minor`
-- `version`
-
-### `expense_item_allocations`
-
-- `item_id`
-- `member_id`
-- `amount_minor`
-
-### `receipt_assets`
-
-- `id` UUID primary key
-- `expense_id`
-- `local_uri`
-- `sha256`
-- `created_at`
-
-### `payment_accounts`
-
-- `id` UUID primary key
-- `member_id`
-- `provider_type`
+- `id` TEXT primary key
+- `member_id` UNIQUE foreign key
+- `provider`
 - `holder_name`
 - `routing_identifier`
 - `account_identifier`
-- `metadata_json`
-
-No password, PIN, OTP or banking authentication credential is allowed.
-
-### `settlements`
-
-- `id` UUID primary key
-- `trip_id`
-- `from_member_id`
-- `to_member_id`
-- `amount_minor`
-- `status` (`OPEN`, `SENT`, `CONFIRMED`, `CANCELLED`)
-- `created_at`
-- `updated_at`
+- `created_at_ms`
+- `updated_at_ms`
 - `version`
 
-### `sync_operations`
+Only transfer-routing data is stored. Passwords, PINs, OTPs, CVVs and banking login/session credentials are prohibited.
 
-- `id` UUID primary key
-- `trip_id`
-- `device_id`
-- `sequence`
-- `operation_type`
-- `entity_id`
-- `expected_version`
-- `payload_json`
-- `status` (`PENDING`, `ACCEPTED`, `REJECTED`, `CONFLICT`)
-- `created_at`
+### v3 — Receipt evidence
+
+#### `receipt_assets`
+
+- `id` TEXT primary key
+- `expense_id` foreign key
+- `local_path`
+- `sha256`
+- `original_name`
+- `mime_type`
+- `size_bytes`
+- `created_at_ms`
+- `version`
+
+Binary receipt files remain outside normal canonical JSON snapshots. Metadata references SplitCrew-managed local evidence.
+
+### v4 — Settlement acknowledgement ledger
+
+#### `settlement_acknowledgements`
+
+- `id` TEXT primary key
+- `trip_id` foreign key
+- `from_member_id` foreign key
+- `to_member_id` foreign key
+- `amount_minor`
+- `confirmed_by_member_id` foreign key
+- `created_at_ms`
+- `version`
+
+These rows are append-only payment ledger entries. They do not rewrite expense history. Current balances are computed from all expenses and then offset by accepted payment entries:
+
+```text
+payer / debtor settlement:
+from_member balance += amount
+to_member balance   -= amount
+```
+
+At command commit time the owner host verifies that the exact `from/to/amount` is still a current settlement suggestion. On reload/restore, validation checks structure, member references, authorization and append-only sequence; it does not replay old payments against the final expense set because later expenses may legitimately change the current debt graph.
+
+## Durable member operation queue
+
+Offline member mutations use a separate SQLite database (`splitcrew-sync-queue.db`) containing serialized `SyncOperation` envelopes with:
+
+- operation id
+- trip id
+- actor member id
+- operation JSON
+- queue state (`queued` or `blocked`)
+- attempt count
+- last error
+- updated timestamp
+
+The queue remains non-authoritative. The owner-host commit is the only canonical mutation.
+
+## Migration guarantees
+
+- v1 → v2 creates payment routing storage.
+- v2 → v3 creates receipt metadata storage.
+- v3 → v4 creates settlement acknowledgement history.
+- Missing JSON fields for newer collections normalize to empty lists so older backups/snapshots remain readable.
+- The legacy `splitcrew.trip.v1` SharedPreferences payload is imported only when SQLite has no current trip, then removed after a successful normalized write.
 
 ## Invariants
 
 1. Money is persisted as integer minor units.
 2. A committed expense conserves money exactly.
-3. New local entity IDs are UUIDs so future offline devices can create records without central ID allocation.
-4. Mutable synchronized candidates carry versions and timestamps.
-5. Member deletion is rejected while financial records still reference that member.
-6. Financial deletion/tombstone semantics will be introduced before multi-device synchronization requires immutable history.
+3. New local entity IDs use UUIDs.
+4. Mutable synchronized entities carry versions/timestamps where applicable.
+5. Member deletion is rejected while expense, payment, or settlement history references that member.
+6. Settlement acknowledgement history is append-only and cannot double-clear the same current debt through the normal command path.
+7. Canonical state replacement during backup restore is atomic at the repository boundary.

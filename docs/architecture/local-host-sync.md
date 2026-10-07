@@ -66,6 +66,8 @@ Host current version = 8
 
 Do not use silent last-write-wins for financial records.
 
+Settlement acknowledgement uses semantic optimistic concurrency rather than an entity version: after any stale trip-revision rebase, the host re-checks that the exact `fromMemberId/toMemberId/amountMinor` is still a current deterministic settlement suggestion. If it changed or was already recorded, the operation becomes an explicit conflict instead of clearing debt twice.
+
 The same optimistic concurrency rule now applies to member identity and repayment-routing profiles. A rename carries `expectedMemberVersion`. A payment-profile update carries `expectedPaymentAccountVersion`; `null` explicitly means the client expects no existing profile. Rebasing a stale trip revision must preserve these entity expectations so a later host apply can still detect an entity-level conflict.
 
 ## Transport
