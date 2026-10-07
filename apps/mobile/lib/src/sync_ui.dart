@@ -215,7 +215,7 @@ final class _SyncCenterPageState extends State<SyncCenterPage> {
                 child: Padding(
                   padding: EdgeInsets.all(14),
                   child: Text(
-                    'Current validation transport uses REST polling every 2 seconds. The host remains authoritative; clients refresh a canonical snapshot after committed revisions. WebSocket push and offline pending-operation queues are the next hardening slice.',
+                    'Committed revisions are pushed over WebSocket for fast updates. REST snapshot/event polling remains the authoritative fallback, so temporary socket loss does not compromise canonical financial state.',
                   ),
                 ),
               ),
@@ -405,6 +405,7 @@ final class _MemberSessionCard extends StatelessWidget {
             const SizedBox(height: 8),
             Text('Profile: $memberName'),
             Text('Status: ${sync.memberOnline ? 'Connected' : 'Host unavailable'}'),
+            Text('Realtime: ${sync.realtimeConnected ? 'WebSocket push' : 'REST fallback'}'),
             Text('Canonical revision: ${sync.canonicalRevision}'),
             if (sync.pinnedHostId != null) SelectableText('Pinned host: ${sync.pinnedHostId}'),
             if (sync.lastSyncAt != null) Text('Last sync: ${sync.lastSyncAt}'),

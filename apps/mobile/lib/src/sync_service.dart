@@ -51,7 +51,13 @@ final class MobileSyncController extends ChangeNotifier {
   String? _pinnedHostId;
   int _canonicalRevision = 0;
   Timer? _pollTimer;
+  Timer? _eventReconnectTimer;
+  WebSocket? _memberEventSocket;
+  bool _eventSocketConnecting = false;
+  bool _eventRefreshInFlight = false;
+  int _eventReconnectAttempt = 0;
   bool _memberOnline = false;
+  bool _realtimeConnected = false;
   bool _busy = false;
   bool _flushingQueue = false;
   String? _lastError;
@@ -62,6 +68,7 @@ final class MobileSyncController extends ChangeNotifier {
   bool get isHostRunning => _hostServer?.isRunning ?? false;
   bool get isMemberSession => _mode == MobileSyncMode.member;
   bool get memberOnline => _memberOnline;
+  bool get realtimeConnected => _realtimeConnected;
   bool get busy => _busy;
   bool get flushingQueue => _flushingQueue;
   String? get lastError => _lastError;
@@ -186,6 +193,7 @@ final class MobileSyncController extends ChangeNotifier {
       await _persistMemberSession();
       await _reloadQueue();
       _startPolling();
+      unawaited(_connectEventSocket());
       notifyListeners();
       unawaited(flushPendingQueue());
     } catch (error) {
@@ -203,6 +211,8 @@ final class MobileSyncController extends ChangeNotifier {
     final tripId = tripController.trip?.id;
     _pollTimer?.cancel();
     _pollTimer = null;
+    _mode = MobileSyncMode.local;
+    await _disconnectEventSocket();
     _memberBaseUri = null;
     _memberSessionToken = null;
     _memberId = null;
@@ -211,7 +221,6 @@ final class MobileSyncController extends ChangeNotifier {
     _memberOnline = false;
     _lastSyncAt = null;
     _lastError = null;
-    _mode = MobileSyncMode.local;
     await _secureStorage.delete(key: _sessionStorageKey);
     if (clearPendingOperations && tripId != null) {
       await _queueStore.clearForTrip(tripId);
@@ -577,9 +586,110 @@ final class MobileSyncController extends ChangeNotifier {
     await _reloadQueue();
   }
 
+  Future<void> _connectEventSocket() async {
+    if (_mode != MobileSyncMode.member || _eventSocketConnecting || _memberEventSocket != null) return;
+    final baseUri = _memberBaseUri;
+    final token = _memberSessionToken;
+    if (baseUri == null || token == null) return;
+
+    _eventSocketConnecting = true;
+    try {
+      final eventUri = baseUri.resolve('/v1/events/ws');
+      final socketUri = eventUri.replace(scheme: eventUri.scheme == 'https' ? 'wss' : 'ws');
+      final socket = await WebSocket.connect(
+        socketUri.toString(),
+        headers: {HttpHeaders.authorizationHeader: 'Bearer $token'},
+      ).timeout(const Duration(seconds: 6));
+
+      if (_mode != MobileSyncMode.member || token != _memberSessionToken) {
+        await socket.close();
+        return;
+      }
+
+      _memberEventSocket = socket;
+      _eventReconnectAttempt = 0;
+      _realtimeConnected = true;
+      notifyListeners();
+      if (pendingCount > 0) unawaited(flushPendingQueue());
+      socket.listen(
+        _handleEventSocketMessage,
+        onDone: () => _handleEventSocketClosed(socket),
+        onError: (_) => _handleEventSocketClosed(socket),
+        cancelOnError: true,
+      );
+    } on Object {
+      _realtimeConnected = false;
+      _scheduleEventSocketReconnect();
+      notifyListeners();
+    } finally {
+      _eventSocketConnecting = false;
+    }
+  }
+
+  Future<void> _disconnectEventSocket() async {
+    _eventReconnectTimer?.cancel();
+    _eventReconnectTimer = null;
+    _eventReconnectAttempt = 0;
+    final socket = _memberEventSocket;
+    _memberEventSocket = null;
+    _realtimeConnected = false;
+    if (socket != null) await socket.close();
+  }
+
+  void _handleEventSocketClosed(WebSocket socket) {
+    if (!identical(_memberEventSocket, socket)) return;
+    _memberEventSocket = null;
+    _realtimeConnected = false;
+    notifyListeners();
+    _scheduleEventSocketReconnect();
+  }
+
+  void _scheduleEventSocketReconnect() {
+    if (_mode != MobileSyncMode.member || _eventReconnectTimer?.isActive == true) return;
+    final delaySeconds = switch (_eventReconnectAttempt) {
+      0 => 2,
+      1 => 4,
+      2 => 8,
+      3 => 15,
+      _ => 30,
+    };
+    _eventReconnectAttempt++;
+    _eventReconnectTimer = Timer(Duration(seconds: delaySeconds), () {
+      _eventReconnectTimer = null;
+      unawaited(_connectEventSocket());
+    });
+  }
+
+  void _handleEventSocketMessage(dynamic raw) {
+    if (raw is! String) return;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return;
+      final message = Map<String, dynamic>.from(decoded);
+      final revision = message['canonicalTripRevision'] as int?;
+      if (revision != null && revision > _canonicalRevision) {
+        unawaited(_refreshFromRealtime());
+      }
+    } on FormatException {
+      // Ignore malformed realtime notifications; REST polling remains authoritative.
+    }
+  }
+
+  Future<void> _refreshFromRealtime() async {
+    if (_eventRefreshInFlight || _mode != MobileSyncMode.member || _busy || _flushingQueue) return;
+    _eventRefreshInFlight = true;
+    try {
+      await refreshMemberSnapshot();
+      if (pendingCount > 0) await flushPendingQueue();
+    } catch (_) {
+      // Socket notifications are hints only; the REST fallback retries canonical refresh.
+    } finally {
+      _eventRefreshInFlight = false;
+    }
+  }
   void _startPolling() {
     _pollTimer?.cancel();
-    _pollTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+    _pollTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       unawaited(_pollEvents());
     });
   }
@@ -631,6 +741,7 @@ final class MobileSyncController extends ChangeNotifier {
       _canonicalRevision = json['revision'] as int? ?? tripController.trip!.version;
       _mode = MobileSyncMode.member;
       _startPolling();
+      unawaited(_connectEventSocket());
       try {
         await refreshMemberSnapshot();
         unawaited(flushPendingQueue());
@@ -720,6 +831,8 @@ final class MobileSyncController extends ChangeNotifier {
   @override
   void dispose() {
     _pollTimer?.cancel();
+    _eventReconnectTimer?.cancel();
+    unawaited(_disconnectEventSocket());
     unawaited(_hostServer?.stop() ?? Future<void>.value());
     _client.close();
     super.dispose();
