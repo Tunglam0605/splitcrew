@@ -4,7 +4,7 @@
 
 SplitCrew is an Apache-2.0 Flutter application for shared expenses. It works as a standalone local app and also supports an owner-hosted LAN group mode where one owner's phone is authoritative and nearby member phones keep cached replicas. A public cloud server is not required for same-network use.
 
-> **Current development line: v0.10 alpha — encrypted owner recovery is being hardened on top of the tested v0.9 QR-join/realtime-sync baseline.**
+> **Current development line: v0.11 alpha — shareable trip summaries and repayment QR exports on top of the tested v0.10 encrypted-recovery baseline.**
 
 ## What is implemented
 
@@ -22,7 +22,9 @@ SplitCrew is an Apache-2.0 Flutter application for shared expenses. It works as 
 - Durable offline mutation queue for member-created/edited/deleted expenses.
 - Idempotent operation IDs, optimistic revisions and explicit entity-version conflicts.
 - Secure local storage for member session credentials.
-- Encrypted backup/recovery foundation for canonical trip data and receipt evidence.
+- Encrypted backup/recovery for canonical trip data and receipt evidence.
+- Save/share repayment VietQR as a PNG without taking a screenshot.
+- Canonical trip summary PNG with totals, balances, deterministic settlement and revision metadata.
 
 See ROADMAP.md for remaining production work.
 
@@ -52,12 +54,11 @@ The debug APK is for testing. A signed public release is still a later milestone
 
 ## Next production slices
 
-1. Finish and validate encrypted owner backup/recovery on Android.
-2. Generalize the durable queue beyond expense CRUD.
-3. Add receipt-media synchronization without putting binary data in JSON snapshots.
-4. Add settlement acknowledgement history/sync.
-5. Run accessibility/privacy/migration acceptance before signed public beta.
-6. Add OCR/item assignment only after data recovery and sync surfaces are stable.
+1. Generalize the durable queue beyond expense CRUD.
+2. Add receipt-media synchronization without putting binary data in JSON snapshots.
+3. Add settlement acknowledgement history/sync.
+4. Run accessibility/privacy/migration acceptance before signed public beta.
+5. Add OCR/item assignment only after data recovery and sync surfaces are stable.
 
 ## Documentation
 

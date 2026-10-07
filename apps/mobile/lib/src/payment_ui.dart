@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:splitcrew_domain/splitcrew_domain.dart';
@@ -5,6 +7,7 @@ import 'package:splitcrew_payment_qr/splitcrew_payment_qr.dart';
 
 import 'app_state.dart';
 import 'home_page.dart';
+import 'image_export.dart';
 
 final class TripWorkspace extends StatelessWidget {
   const TripWorkspace({super.key, required this.controller});
@@ -218,13 +221,15 @@ final class RepaymentQrPage extends StatelessWidget {
           ),
           const SizedBox(height: 20),
           if (payload != null)
-            Center(
-              child: Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: QrImageView(data: payload, version: QrVersions.auto, size: 280),
-                ),
-              ),
+            _ShareableRepaymentQr(
+              payload: payload,
+              fromName: controller.memberName(fromMemberId),
+              toName: controller.memberName(toMemberId),
+              amountMinor: amount.minorUnits,
+              bankName: bank?.displayName ?? account.routingIdentifier,
+              accountIdentifier: account.accountIdentifier,
+              holderName: account.holderName,
+              purpose: purpose,
             )
           else
             Card(
@@ -253,6 +258,219 @@ final class RepaymentQrPage extends StatelessWidget {
           const Text(
             'Verify the recipient and amount in the banking app before confirming the transfer. SplitCrew does not mark a payment received automatically.',
             textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+final class _ShareableRepaymentQr extends StatefulWidget {
+  const _ShareableRepaymentQr({
+    required this.payload,
+    required this.fromName,
+    required this.toName,
+    required this.amountMinor,
+    required this.bankName,
+    required this.accountIdentifier,
+    required this.holderName,
+    required this.purpose,
+  });
+
+  final String payload;
+  final String fromName;
+  final String toName;
+  final int amountMinor;
+  final String bankName;
+  final String accountIdentifier;
+  final String holderName;
+  final String purpose;
+
+  @override
+  State<_ShareableRepaymentQr> createState() => _ShareableRepaymentQrState();
+}
+
+final class _ShareableRepaymentQrState extends State<_ShareableRepaymentQr> {
+  final GlobalKey _captureKey = GlobalKey();
+  final PngExportService _exporter = const PngExportService();
+  bool _busy = false;
+
+  Future<void> _save() async {
+    await _runExport((bytes) async {
+      final saved = await _exporter.savePng(
+        bytes: bytes,
+        fileName: _fileName(),
+        dialogTitle: 'Save repayment QR',
+      );
+      if (saved && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Repayment QR PNG saved.')),
+        );
+      }
+    });
+  }
+
+  Future<void> _share() async {
+    await _runExport((bytes) async {
+      await _exporter.sharePng(
+        bytes: bytes,
+        fileName: _fileName(),
+        subject: 'SplitCrew repayment QR',
+        text: '${widget.fromName} pays ${widget.toName} · '
+            '${_money(widget.amountMinor)} VND',
+      );
+    });
+  }
+
+  Future<void> _runExport(Future<void> Function(Uint8List bytes) action) async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      final bytes = await _exporter.captureBoundary(
+        _captureKey,
+        targetPixelWidth: 1440,
+        maxPixelRatio: 3,
+      );
+      await action(bytes);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('$error')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  String _fileName() {
+    final recipient = widget.toName
+        .trim()
+        .replaceAll(RegExp(r'[^A-Za-z0-9_-]+'), '-')
+        .replaceAll(RegExp(r'-+'), '-');
+    return 'splitcrew-repayment-'
+        '${recipient.isEmpty ? 'recipient' : recipient}-'
+        '${widget.amountMinor}.png';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Column(
+      children: [
+        RepaintBoundary(
+          key: _captureKey,
+          child: Material(
+            color: Colors.white,
+            child: Container(
+              width: double.infinity,
+              constraints: const BoxConstraints(maxWidth: 440),
+              padding: const EdgeInsets.all(24),
+              color: Colors.white,
+              child: Column(
+                children: [
+                  const Text(
+                    'SplitCrew repayment',
+                    style: TextStyle(
+                      color: Colors.black,
+                      fontSize: 22,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    '${widget.fromName} → ${widget.toName}',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: Colors.black87, fontSize: 16),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '${_money(widget.amountMinor)} VND',
+                    style: const TextStyle(
+                      color: Colors.black,
+                      fontSize: 28,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  QrImageView(
+                    data: widget.payload,
+                    version: QrVersions.auto,
+                    size: 280,
+                    backgroundColor: Colors.white,
+                  ),
+                  const SizedBox(height: 16),
+                  _QrExportDetail(label: 'Bank', value: widget.bankName),
+                  _QrExportDetail(label: 'Account', value: widget.accountIdentifier),
+                  _QrExportDetail(label: 'Holder', value: widget.holderName),
+                  _QrExportDetail(label: 'Content', value: widget.purpose),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Verify recipient and amount in your banking app before confirming.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.black54, fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Wrap(
+          spacing: 10,
+          runSpacing: 10,
+          alignment: WrapAlignment.center,
+          children: [
+            FilledButton.tonalIcon(
+              onPressed: _busy ? null : _save,
+              icon: const Icon(Icons.download_rounded),
+              label: Text(_busy ? 'Preparing…' : 'Save QR'),
+            ),
+            FilledButton.icon(
+              onPressed: _busy ? null : _share,
+              icon: const Icon(Icons.share_rounded),
+              label: const Text('Share QR'),
+            ),
+          ],
+        ),
+        if (_busy) ...[
+          const SizedBox(height: 10),
+          LinearProgressIndicator(color: scheme.primary),
+        ],
+      ],
+    );
+  }
+}
+
+final class _QrExportDetail extends StatelessWidget {
+  const _QrExportDetail({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 72,
+            child: Text(
+              label,
+              style: const TextStyle(
+                color: Colors.black54,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: const TextStyle(color: Colors.black87, fontSize: 12),
+            ),
           ),
         ],
       ),

@@ -130,8 +130,17 @@ jobs:
       - name: Analyze mobile app
         working-directory: apps/mobile
         run: flutter analyze --no-fatal-infos
+      - name: Test trip summary export UI
+        working-directory: apps/mobile
+        timeout-minutes: 2
+        run: flutter test test/trip_summary_test.dart --reporter expanded
+      - name: Test repayment QR export UI
+        working-directory: apps/mobile
+        timeout-minutes: 2
+        run: flutter test test/repayment_qr_share_test.dart --reporter expanded
       - name: Test mobile app
         working-directory: apps/mobile
+        timeout-minutes: 5
         run: flutter test
       - name: Build debug APK
         working-directory: apps/mobile

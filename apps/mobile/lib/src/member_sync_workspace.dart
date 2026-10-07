@@ -7,6 +7,7 @@ import 'home_page.dart';
 import 'sync_queue_store.dart';
 import 'sync_service.dart';
 import 'sync_ui.dart';
+import 'trip_summary.dart';
 
 final class MemberSyncedWorkspace extends StatelessWidget {
   const MemberSyncedWorkspace({
@@ -39,6 +40,18 @@ final class MemberSyncedWorkspace extends StatelessWidget {
                 ],
               ),
               actions: [
+                IconButton(
+                  tooltip: 'Canonical trip summary',
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => TripSummaryPage(
+                        controller: controller,
+                        isCanonicalReplica: true,
+                      ),
+                    ),
+                  ),
+                  icon: const Icon(Icons.ios_share_rounded),
+                ),
                 IconButton(
                   tooltip: 'Crew sync',
                   onPressed: () => Navigator.of(context).push(

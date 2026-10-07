@@ -2,7 +2,23 @@
 
 All notable changes to SplitCrew are documented here.
 
-## [Unreleased] — v0.10.0-alpha
+## [Unreleased] — v0.11.0-alpha
+
+### Added
+
+- Canonical trip summary screen with total spend, member/expense/receipt counts, per-member balances, deterministic settlement, trip revision and generation timestamp.
+- Save the canonical trip summary as a PNG.
+- Share the canonical trip summary directly through the platform share sheet.
+- Save or share an exact-amount VietQR repayment card as PNG without taking a screenshot.
+- Reusable PNG export adapter for Flutter render boundaries.
+- Member devices may export summaries from owner-committed canonical snapshots; pending local operations remain excluded.
+
+### Safety / robustness
+
+- PNG rendering uses a hard pixel budget to reduce out-of-memory risk on unusually long summaries.
+- Repayment exports include recipient, bank routing details, transfer content and exact integer-VND amount so users can verify the transfer before confirming it.
+
+## v0.10.0-alpha
 
 ### Added
 
@@ -15,7 +31,7 @@ All notable changes to SplitCrew are documented here.
 
 ### Safety
 
-- Restore is blocked while the phone is a member client or while Owner Host Session is running.
+- Backup/restore is blocked while live owner-host synchronization can mutate canonical state.
 - Backup passphrases are never persisted or recoverable by SplitCrew.
 - Stale pending operations are cleared after canonical recovery.
 
