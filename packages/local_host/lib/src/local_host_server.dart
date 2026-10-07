@@ -5,7 +5,9 @@ import 'dart:math';
 import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_router/shelf_router.dart';
+import 'package:shelf_web_socket/shelf_web_socket.dart';
 import 'package:splitcrew_sync_protocol/splitcrew_sync_protocol.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:uuid/uuid.dart';
 
 import 'host_backend.dart';
@@ -29,6 +31,7 @@ final class LocalHostServer {
   HttpServer? _server;
   final Map<String, _HostSession> _sessions = {};
   final List<CommittedSyncEvent> _events = [];
+  final Set<WebSocketChannel> _eventChannels = {};
 
   bool get isRunning => _server != null;
   int? get port => _server?.port;
@@ -40,7 +43,8 @@ final class LocalHostServer {
       ..post('/v1/join', _join)
       ..get('/v1/snapshot', _snapshot)
       ..post('/v1/operations', _operation)
-      ..get('/v1/events', _eventFeed);
+      ..get('/v1/events', _eventFeed)
+      ..get('/v1/events/ws', _eventSocket);
     final handler = const Pipeline()
         .addMiddleware(_corsForLan())
         .addMiddleware(_jsonErrorBoundary())
@@ -57,6 +61,11 @@ final class LocalHostServer {
     final server = _server;
     _server = null;
     _sessions.clear();
+    final channels = _eventChannels.toList();
+    _eventChannels.clear();
+    for (final channel in channels) {
+      await channel.sink.close();
+    }
     if (server != null) await server.close(force: true);
   }
 
@@ -143,6 +152,7 @@ final class LocalHostServer {
     final event = result.event;
     if (event != null && !_events.any((existing) => existing.eventId == event.eventId)) {
       _events.add(event);
+      _broadcastEvent(event);
       if (_events.length > 500) _events.removeRange(0, _events.length - 500);
     }
     final statusCode = switch (result.status) {
@@ -164,6 +174,45 @@ final class LocalHostServer {
     });
   }
 
+
+  Future<Response> _eventSocket(Request request) async {
+    if (_authenticate(request) == null) return _json(401, {'error': 'UNAUTHORIZED'});
+
+    final handler = webSocketHandler(
+      (channel) {
+        _eventChannels.add(channel);
+        channel.sink.add(
+          jsonEncode({
+            'type': 'hello',
+            'canonicalTripRevision': backend.revision,
+          }),
+        );
+        channel.stream.listen(
+          (_) {},
+          onDone: () => _eventChannels.remove(channel),
+          onError: (_) => _eventChannels.remove(channel),
+          cancelOnError: true,
+        );
+      },
+      pingInterval: const Duration(seconds: 20),
+    );
+    return handler(request);
+  }
+
+  void _broadcastEvent(CommittedSyncEvent event) {
+    final message = jsonEncode({
+      'type': 'revision',
+      'canonicalTripRevision': backend.revision,
+      'eventId': event.eventId,
+    });
+    for (final channel in _eventChannels.toList()) {
+      try {
+        channel.sink.add(message);
+      } on StateError {
+        _eventChannels.remove(channel);
+      }
+    }
+  }
   _HostSession? _authenticate(Request request) {
     final header = request.headers['authorization'];
     if (header == null || !header.startsWith('Bearer ')) return null;

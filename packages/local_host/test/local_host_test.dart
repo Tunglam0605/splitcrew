@@ -149,4 +149,63 @@ void main() {
     final eventJson = jsonDecode(events.body) as Map<String, dynamic>;
     expect((eventJson['events'] as List), hasLength(1));
   });
+
+  test('websocket rejects unauthenticated upgrade', () async {
+    final wsUri = base.resolve('/v1/events/ws').replace(scheme: 'ws');
+    await expectLater(
+      WebSocket.connect(wsUri.toString()),
+      throwsA(isA<WebSocketException>()),
+    );
+  });
+
+  test('authenticated websocket pushes committed revisions in realtime', () async {
+    final invite = host.createInvite(memberId: 'member-1', advertisedHost: '127.0.0.1');
+    final join = await http.post(
+      base.resolve('/v1/join'),
+      headers: {'content-type': 'application/json'},
+      body: jsonEncode({'invite': invite.encode()}),
+    );
+    final token = (jsonDecode(join.body) as Map<String, dynamic>)['sessionToken'] as String;
+
+    final wsUri = base.resolve('/v1/events/ws').replace(scheme: 'ws');
+    final socket = await WebSocket.connect(
+      wsUri.toString(),
+      headers: {'authorization': 'Bearer $token'},
+    );
+    final messages = socket.asBroadcastStream();
+    final hello = jsonDecode(await messages.first.timeout(const Duration(seconds: 2))) as Map<String, dynamic>;
+    expect(hello['type'], 'hello');
+    expect(hello['canonicalTripRevision'], 0);
+
+    final committedFuture = messages
+        .map((raw) => jsonDecode(raw as String) as Map<String, dynamic>)
+        .firstWhere((message) => message['type'] == 'revision')
+        .timeout(const Duration(seconds: 2));
+
+    final operation = SyncOperation(
+      operationId: 'ws-op-1',
+      tripId: 'trip-1',
+      actorMemberId: 'member-1',
+      expectedTripRevision: 0,
+      type: SyncOperationType.createExpense,
+      payload: const {'title': 'Realtime dinner'},
+      createdAtEpochMs: 2000,
+    );
+    final accepted = await http.post(
+      base.resolve('/v1/operations'),
+      headers: {
+        'content-type': 'application/json',
+        'authorization': 'Bearer $token',
+      },
+      body: jsonEncode(operation.toJson()),
+    );
+    expect(accepted.statusCode, 200);
+
+    final pushed = await committedFuture;
+    expect(pushed['canonicalTripRevision'], 1);
+    expect(pushed['eventId'], 'event-ws-op-1');
+    expect(pushed.containsKey('event'), isFalse);
+
+    await socket.close();
+  });
 }

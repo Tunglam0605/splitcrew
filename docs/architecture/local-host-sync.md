@@ -68,13 +68,16 @@ Do not use silent last-write-wins for financial records.
 
 ## Transport
 
-The protocol layer must remain transport-independent. Initial implementations may use:
+The protocol layer remains transport-independent. The current LAN implementation deliberately separates authority from notification:
 
-- HTTP/REST for request-response commands and snapshots;
-- WebSocket for realtime canonical events;
-- local network discovery for host discovery.
+- HTTP/REST is authoritative for join, snapshots, commands and the bounded event-feed fallback;
+- WebSocket is notification-only and pushes the newest canonical trip revision after a committed operation;
+- WebSocket messages do not carry financial payloads; clients fetch the canonical snapshot over authenticated REST;
+- member clients keep slower REST polling as a fallback when the WebSocket is unavailable and reconnect the socket automatically;
+- the same bearer session authenticates REST and WebSocket endpoints, and the member pins the invited host identity;
+- local network discovery remains an infrastructure concern and does not change domain/sync semantics.
 
-Bluetooth/Wi-Fi Direct or a cloud relay can be added later without changing domain rules.
+This keeps temporary socket loss from affecting correctness: it may increase refresh latency, but it cannot create a second source of truth. Bluetooth/Wi-Fi Direct or a cloud relay can be added later without changing domain rules.
 
 ## Host failure
 
