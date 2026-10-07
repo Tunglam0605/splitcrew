@@ -3,6 +3,7 @@ import 'package:splitcrew_domain/splitcrew_domain.dart';
 import 'package:splitcrew_split_engine/splitcrew_split_engine.dart';
 
 import 'app_state.dart';
+import 'trip_summary.dart';
 
 enum ExpenseSplitMode { equal, exact, percentage, shares }
 
@@ -139,6 +140,15 @@ final class TripDashboard extends StatelessWidget {
             ],
           ),
           actions: [
+            IconButton(
+              tooltip: 'Trip summary',
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => TripSummaryPage(controller: controller),
+                ),
+              ),
+              icon: const Icon(Icons.ios_share_rounded),
+            ),
             IconButton(
               tooltip: 'Add member',
               onPressed: () => _showAddMemberDialog(context, controller),

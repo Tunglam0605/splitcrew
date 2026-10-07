@@ -47,7 +47,8 @@ SplitCrew is developed in vertical milestones. Every milestone must preserve det
 - [x] Payment-account abstraction
 - [x] VietQR adapter
 - [x] Exact repayment QR generation
-- [ ] Export/share polished trip summary image
+- [x] Save/share repayment QR as PNG
+- [x] Export/share polished trip summary image
 
 ## M6 — Owner-hosted Group Mode
 - [x] Owner phone as authoritative LAN host
