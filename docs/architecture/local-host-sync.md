@@ -66,6 +66,8 @@ Host current version = 8
 
 Do not use silent last-write-wins for financial records.
 
+The same optimistic concurrency rule now applies to member identity and repayment-routing profiles. A rename carries `expectedMemberVersion`. A payment-profile update carries `expectedPaymentAccountVersion`; `null` explicitly means the client expects no existing profile. Rebasing a stale trip revision must preserve these entity expectations so a later host apply can still detect an entity-level conflict.
+
 ## Transport
 
 The protocol layer remains transport-independent. The current LAN implementation deliberately separates authority from notification:

@@ -4,6 +4,7 @@ import 'package:splitcrew_split_engine/splitcrew_split_engine.dart';
 
 import 'app_state.dart';
 import 'home_page.dart';
+import 'member_profile_page.dart';
 import 'sync_queue_store.dart';
 import 'sync_service.dart';
 import 'sync_ui.dart';
@@ -334,7 +335,18 @@ final class _MemberMembers extends StatelessWidget {
                         ? 'This device profile'
                         : 'Member',
               ),
-              trailing: member.id == sync.memberId ? const Icon(Icons.phone_android_rounded) : null,
+              trailing: member.id == sync.memberId ? const Icon(Icons.edit_rounded) : null,
+              onTap: member.id == sync.memberId
+                  ? () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => MemberProfilePage(
+                            controller: controller,
+                            sync: sync,
+                            memberId: member.id,
+                          ),
+                        ),
+                      )
+                  : null,
             ),
           ),
       ],

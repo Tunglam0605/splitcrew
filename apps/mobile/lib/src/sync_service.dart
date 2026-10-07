@@ -96,6 +96,41 @@ final class MobileSyncController extends ChangeNotifier {
     return controller;
   }
 
+  @visibleForTesting
+  static Future<MobileSyncController> memberSessionForTesting({
+    required TripController tripController,
+    required String memberId,
+    required int canonicalRevision,
+    required PendingSyncQueueStore queueStore,
+    Uri? baseUri,
+    String? sessionToken,
+    bool online = false,
+    http.Client? client,
+    Uuid? uuid,
+    TripRepository? snapshotRepository,
+  }) async {
+    final controller = MobileSyncController._(
+      tripController: tripController,
+      client: client,
+      uuid: uuid,
+      snapshotRepository: snapshotRepository,
+      queueStore: queueStore,
+    );
+    controller
+      .._mode = MobileSyncMode.member
+      .._memberId = memberId
+      .._canonicalRevision = canonicalRevision
+      .._memberBaseUri = baseUri
+      .._memberSessionToken = sessionToken
+      .._memberOnline = online;
+    await controller._reloadQueue();
+    return controller;
+  }
+
+  @visibleForTesting
+  static HostTripBackend hostBackendForTesting(TripController tripController, {Uuid? uuid}) =>
+      _MobileTripHostBackend(tripController, uuid: uuid);
+
   Future<void> startHost() async {
     if (_mode == MobileSyncMode.member) {
       throw StateError('Leave the member session before starting a host.');
@@ -351,6 +386,69 @@ final class MobileSyncController extends ChangeNotifier {
     );
   }
 
+  Future<SyncWriteDisposition> renameMember({
+    required String memberId,
+    required String name,
+  }) async {
+    if (_mode != MobileSyncMode.member) {
+      await tripController.renameMember(memberId, name);
+      return SyncWriteDisposition.committed;
+    }
+
+    final trip = tripController.trip;
+    final actor = _memberId;
+    if (trip == null || actor == null) throw StateError('No active member profile.');
+    if (memberId != actor) throw StateError('Members may only rename their own profile.');
+    final member = trip.members.where((item) => item.id == memberId).firstOrNull;
+    if (member == null) throw ArgumentError('Member not found.');
+
+    return _enqueueMemberOperation(
+      SyncOperationType.renameMember,
+      {
+        'memberId': memberId,
+        'expectedMemberVersion': member.version,
+        'name': name,
+      },
+    );
+  }
+
+  Future<SyncWriteDisposition> updatePaymentAccount({
+    required String memberId,
+    required String holderName,
+    required String bankBin,
+    required String accountIdentifier,
+  }) async {
+    if (_mode != MobileSyncMode.member) {
+      await tripController.upsertPaymentAccount(
+        memberId: memberId,
+        holderName: holderName,
+        bankBin: bankBin,
+        accountIdentifier: accountIdentifier,
+      );
+      return SyncWriteDisposition.committed;
+    }
+
+    final trip = tripController.trip;
+    final actor = _memberId;
+    if (trip == null || actor == null) throw StateError('No active member profile.');
+    if (memberId != actor) throw StateError('Members may only update their own payment profile.');
+    if (!trip.members.any((member) => member.id == memberId)) {
+      throw ArgumentError('Member not found.');
+    }
+    final existing = trip.paymentAccounts.where((account) => account.memberId == memberId).firstOrNull;
+
+    return _enqueueMemberOperation(
+      SyncOperationType.updatePaymentAccount,
+      {
+        'memberId': memberId,
+        'expectedPaymentAccountVersion': existing?.version,
+        'holderName': holderName,
+        'bankBin': bankBin,
+        'accountIdentifier': accountIdentifier,
+      },
+    );
+  }
+
   Future<SyncWriteDisposition> _enqueueMemberOperation(
     SyncOperationType type,
     Map<String, Object?> payload,
@@ -474,6 +572,11 @@ final class MobileSyncController extends ChangeNotifier {
         _canonicalRevision = result.canonicalTripRevision;
 
         if (result.errorCode != 'STALE_REVISION') {
+          try {
+            await refreshMemberSnapshot();
+          } catch (_) {
+            // Keep the explicit entity conflict even if the refresh must wait for the next poll.
+          }
           final message = result.message ?? result.errorCode ?? 'The owner rejected a stale entity version.';
           await _blockEntry(entry, message);
           return SyncWriteDisposition.queued;
@@ -1029,11 +1132,30 @@ final class _MobileTripHostBackend implements HostTripBackend {
         if (!isOwner && targetId != actor.id) {
           throw const _ForbiddenOperation('Members may only rename their own profile.');
         }
+        final target = trip.members.where((member) => member.id == targetId).firstOrNull;
+        if (target == null) throw ArgumentError('Member not found.');
+        final expectedMemberVersion = payload['expectedMemberVersion'] as int?;
+        if (expectedMemberVersion == null || expectedMemberVersion != target.version) {
+          throw _EntityVersionConflict(
+            'Member version changed from ${expectedMemberVersion ?? 'unknown'} to ${target.version}.',
+          );
+        }
         await controller.renameMember(targetId, payload['name'] as String);
       case SyncOperationType.updatePaymentAccount:
         final targetId = payload['memberId'] as String;
         if (!isOwner && targetId != actor.id) {
           throw const _ForbiddenOperation('Members may only update their own payment profile.');
+        }
+        if (!payload.containsKey('expectedPaymentAccountVersion')) {
+          throw const _EntityVersionConflict('Payment account version is required.');
+        }
+        final existing = trip.paymentAccounts.where((account) => account.memberId == targetId).firstOrNull;
+        final expectedPaymentVersion = payload['expectedPaymentAccountVersion'] as int?;
+        final actualPaymentVersion = existing?.version;
+        if (expectedPaymentVersion != actualPaymentVersion) {
+          throw _EntityVersionConflict(
+            'Payment account version changed from ${expectedPaymentVersion ?? 'none'} to ${actualPaymentVersion ?? 'none'}.',
+          );
         }
         await controller.upsertPaymentAccount(
           memberId: targetId,
