@@ -104,7 +104,7 @@ jobs:
           rm -rf apps/mobile/android
           cp -R "$tmp/mobile/android" apps/mobile/android
           cp "$tmp/mobile/.metadata" apps/mobile/.metadata
-      - name: Configure Android LAN sync and updater permissions
+      - name: Configure Android camera, LAN sync and updater permissions
         shell: bash
         run: |
           python - <<'PY'
@@ -113,6 +113,7 @@ jobs:
           text = manifest.read_text()
           permissions = [
               '    <uses-permission android:name="android.permission.INTERNET" />\n',
+              '    <uses-permission android:name="android.permission.CAMERA" />\n',
               '    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />\n',
           ]
           for permission in permissions:

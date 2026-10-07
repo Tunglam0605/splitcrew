@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import 'app_state.dart';
@@ -22,6 +25,15 @@ final class _JoinCrewPageState extends State<JoinCrewPage> {
   void dispose() {
     _inviteController.dispose();
     super.dispose();
+  }
+
+  Future<void> _scanQr() async {
+    final invite = await Navigator.of(context).push<String>(
+      MaterialPageRoute<String>(builder: (_) => const ScanInviteQrPage()),
+    );
+    if (!mounted || invite == null) return;
+    _inviteController.text = invite;
+    await _join();
   }
 
   Future<void> _join() async {
@@ -81,6 +93,12 @@ final class _JoinCrewPageState extends State<JoinCrewPage> {
             ),
           ),
           const SizedBox(height: 12),
+          FilledButton.tonalIcon(
+            onPressed: _joining ? null : _scanQr,
+            icon: const Icon(Icons.qr_code_scanner_rounded),
+            label: const Text('Scan owner QR'),
+          ),
+          const SizedBox(height: 8),
           OutlinedButton.icon(
             onPressed: _joining
                 ? null
@@ -99,8 +117,83 @@ final class _JoinCrewPageState extends State<JoinCrewPage> {
           ),
           const SizedBox(height: 18),
           const Text(
-            'QR scanning will be added after this two-device LAN flow is validated. The owner already receives a QR and copyable invite payload.',
+            'Scan the owner QR for the fastest join, or paste the invite payload manually when camera access is unavailable.',
             textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+final class ScanInviteQrPage extends StatefulWidget {
+  const ScanInviteQrPage({super.key});
+
+  @override
+  State<ScanInviteQrPage> createState() => _ScanInviteQrPageState();
+}
+
+final class _ScanInviteQrPageState extends State<ScanInviteQrPage> {
+  late final MobileScannerController _scanner = MobileScannerController(
+    formats: const [BarcodeFormat.qrCode],
+    detectionSpeed: DetectionSpeed.noDuplicates,
+  );
+  bool _handled = false;
+
+  void _onDetect(BarcodeCapture capture) {
+    if (_handled) return;
+    for (final barcode in capture.barcodes) {
+      final value = barcode.rawValue?.trim();
+      if (value == null || !value.startsWith('splitcrew://join/')) continue;
+      _handled = true;
+      Navigator.of(context).pop(value);
+      return;
+    }
+  }
+
+  @override
+  void dispose() {
+    unawaited(_scanner.dispose());
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Scaffold(
+      appBar: AppBar(title: const Text('Scan owner QR')),
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          MobileScanner(controller: _scanner, onDetect: _onDetect),
+          IgnorePointer(
+            child: Center(
+              child: Container(
+                width: 250,
+                height: 250,
+                decoration: BoxDecoration(
+                  border: Border.all(color: scheme.primary, width: 4),
+                  borderRadius: BorderRadius.circular(24),
+                ),
+              ),
+            ),
+          ),
+          SafeArea(
+            child: Align(
+              alignment: Alignment.bottomCenter,
+              child: Container(
+                margin: const EdgeInsets.all(20),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: BoxDecoration(
+                  color: scheme.surface.withValues(alpha: 0.92),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: const Text(
+                  'Place the SplitCrew owner QR inside the frame. Other QR codes are ignored.',
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
           ),
         ],
       ),
